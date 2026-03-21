@@ -1,0 +1,49 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color: #0f172a;
+    font-family: "Noto Sans KR", "Apple SD Gothic Neo", sans-serif;
+    background-color: #eff4fb;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    margin: 0;
+    min-width: 320px;
+    min-height: 100vh;
+    color: #0f172a;
+    background: #eff4fb;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
+  }
+}
+
+@layer components {
+  .form-label {
+    @apply mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-slate-500;
+  }
+
+  .form-input {
+    @apply h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-navy-400 focus:bg-white focus:ring-4 focus:ring-blue-100;
+  }
+
+  .form-textarea {
+    @apply w-full rounded-3xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm leading-6 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-navy-400 focus:bg-white focus:ring-4 focus:ring-blue-100;
+  }
+}

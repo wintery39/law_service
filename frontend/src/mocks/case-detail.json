@@ -1,0 +1,287 @@
+[
+  {
+    "id": "case-001",
+    "title": "보급 창고 자산 무단 반출 의혹",
+    "caseType": "criminal",
+    "status": "waiting_for_input",
+    "occurredAt": "2026-03-14T05:30:00.000Z",
+    "location": "제3보급대대 창고동 B-2",
+    "author": "대위 김도현",
+    "relatedPersons": ["하사 박준형", "병장 최민수", "민간정비원 임성규"],
+    "summary": "야간 근무 종료 직후 비인가 반출 의심 정황이 확인되어 군수품 관리 절차 위반 여부를 조사 중인 형사 사건입니다.",
+    "details": "창고 출입기록과 CCTV 확인 결과, 2026년 3월 14일 14시 30분경 특정 장비 상자 2개가 정식 반출 절차 없이 외부 적재 구역으로 이동한 정황이 포착되었습니다. 재물 관리대장과 실물 수량 사이에 차이가 존재해 관련자 진술 확보와 문서화가 진행 중입니다.",
+    "priority": "high",
+    "createdAt": "2026-03-14T07:00:00.000Z",
+    "updatedAt": "2026-03-18T09:40:00.000Z",
+    "progressPercent": 42,
+    "activeQuestionCount": 1,
+    "documentCount": 4,
+    "attachmentProvided": true,
+    "legalReviewSummary": "현재까지 확보된 자료만으로는 반출 승인 여부와 물품 수량 차이의 원인을 단정하기 어렵습니다. 다만 무단 반출 정황이 존재하므로 관련 진술서와 경위서의 정합성을 우선 확보해야 하며, 압수물 목록 확인이 완료되면 군용물 관리 위반 여부 판단이 가능해집니다.",
+    "urgencyNote": "지휘관 보고 예정 시각 이전까지 압수물 수량과 보관 위치를 확정해야 합니다.",
+    "timeline": [
+      {
+        "id": "case-001-tl-01",
+        "type": "question_requested",
+        "title": "압수물 확인 관련 추가 질문 생성",
+        "description": "창고 반출 물품의 정확한 수량과 대체 보관 위치를 확인하기 위한 질문이 생성되었습니다.",
+        "occurredAt": "2026-03-18T09:40:00.000Z",
+        "actor": "LawFlow LLM",
+        "relatedQuestionId": "question-001",
+        "relatedDocumentId": "doc-003"
+      },
+      {
+        "id": "case-001-tl-02",
+        "type": "document_generated",
+        "title": "사건경위서 초안 갱신",
+        "description": "출입기록과 CCTV 확인 결과가 반영된 사건경위서 초안이 다시 생성되었습니다.",
+        "occurredAt": "2026-03-17T16:10:00.000Z",
+        "actor": "문서 생성 엔진",
+        "relatedDocumentId": "doc-002"
+      },
+      {
+        "id": "case-001-tl-03",
+        "type": "document_completed",
+        "title": "진술서 초안 완료",
+        "description": "초기 사실관계에 기반한 진술서 초안이 작성 완료되었습니다.",
+        "occurredAt": "2026-03-16T11:30:00.000Z",
+        "actor": "문서 생성 엔진",
+        "relatedDocumentId": "doc-001"
+      },
+      {
+        "id": "case-001-tl-04",
+        "type": "case_created",
+        "title": "사건 등록",
+        "description": "보급 창고 자산 무단 반출 의혹 사건이 신규 등록되었습니다.",
+        "occurredAt": "2026-03-14T07:00:00.000Z",
+        "actor": "대위 김도현"
+      }
+    ],
+    "documents": [],
+    "questions": []
+  },
+  {
+    "id": "case-002",
+    "title": "근무지 무단 이탈 관련 징계 절차",
+    "caseType": "disciplinary",
+    "status": "completed",
+    "occurredAt": "2026-03-01T09:00:00.000Z",
+    "location": "제12보병여단 본부중대",
+    "author": "소령 이지훈",
+    "relatedPersons": ["중사 정우람", "상병 문태윤"],
+    "summary": "반복된 근무지 무단 이탈 사안에 대해 징계위원회 제출용 문서 패키지가 모두 완성된 상태입니다.",
+    "details": "근무 배치표와 복무 일지를 대조한 결과, 피징계자가 지정 근무 시간 중 두 차례 무단 이탈한 사실이 확인되었습니다. 지휘관 경고 이후에도 유사 행동이 재발하여 징계의결 요구 절차가 진행되었습니다.",
+    "priority": "medium",
+    "createdAt": "2026-03-01T10:20:00.000Z",
+    "updatedAt": "2026-03-16T14:10:00.000Z",
+    "progressPercent": 100,
+    "activeQuestionCount": 0,
+    "documentCount": 4,
+    "attachmentProvided": true,
+    "legalReviewSummary": "징계 사유의 반복성과 사전 경고 이력이 모두 확보되어 징계위 제출 요건이 충족되었습니다. 피징계자 소명 기회 부여와 조사기록 정리도 완료되어, 제출 직전 상태로 판단됩니다.",
+    "urgencyNote": "이번 주 징계위원회 상정 일정에 맞춰 제출 패키지를 유지하면 됩니다.",
+    "timeline": [
+      {
+        "id": "case-002-tl-01",
+        "type": "document_completed",
+        "title": "제출 패키지 최종 정리",
+        "description": "징계위원회 제출용 표지와 첨부 순서가 최종 정리되었습니다.",
+        "occurredAt": "2026-03-16T14:10:00.000Z",
+        "actor": "문서 생성 엔진",
+        "relatedDocumentId": "doc-008"
+      },
+      {
+        "id": "case-002-tl-02",
+        "type": "document_completed",
+        "title": "소명기회 통지서 발송 반영",
+        "description": "통지 완료 정보가 문서 이력에 반영되었습니다.",
+        "occurredAt": "2026-03-14T09:00:00.000Z",
+        "actor": "행정 담당관",
+        "relatedDocumentId": "doc-007"
+      },
+      {
+        "id": "case-002-tl-03",
+        "type": "status_updated",
+        "title": "사건 상태 완료 전환",
+        "description": "필수 문서 4종이 모두 완료되어 사건 상태가 완료로 전환되었습니다.",
+        "occurredAt": "2026-03-14T08:30:00.000Z",
+        "actor": "LawFlow 시스템"
+      },
+      {
+        "id": "case-002-tl-04",
+        "type": "case_created",
+        "title": "사건 등록",
+        "description": "근무지 무단 이탈 관련 징계 절차 사건이 등록되었습니다.",
+        "occurredAt": "2026-03-01T10:20:00.000Z",
+        "actor": "소령 이지훈"
+      }
+    ],
+    "documents": [],
+    "questions": []
+  },
+  {
+    "id": "case-003",
+    "title": "훈련 중 폭행 시비 조사 사건",
+    "caseType": "criminal",
+    "status": "waiting_for_input",
+    "occurredAt": "2026-03-09T12:10:00.000Z",
+    "location": "산악전 훈련장 2구역",
+    "author": "중위 박세린",
+    "relatedPersons": ["병장 최재원", "상병 윤동하", "의무병 전수민"],
+    "summary": "현장 진술이 엇갈려 LLM이 반복 질문을 통해 사실관계를 보완하고 있는 형사 사건입니다.",
+    "details": "훈련 복귀 과정에서 선임병과 후임병 사이의 폭행 시비가 발생했다는 신고가 접수되었습니다. 최초 진술과 참고인 진술이 부분적으로 충돌하며, 접촉 시점과 지시 불이행 여부에 대한 보완 질문이 여러 차례 이어지고 있습니다.",
+    "priority": "critical",
+    "createdAt": "2026-03-09T13:00:00.000Z",
+    "updatedAt": "2026-03-18T06:20:00.000Z",
+    "progressPercent": 58,
+    "activeQuestionCount": 1,
+    "documentCount": 5,
+    "attachmentProvided": false,
+    "legalReviewSummary": "참고인 진술은 확보되었으나 당사자 진술의 시점·행위 방식이 서로 달라 폭행 성립 여부보다 사실관계 정합성 확보가 우선입니다. 추가 질문을 통해 접촉 강도, 선행 지시, 현장 배치 상황을 정리한 뒤 최종 의견서를 작성해야 합니다.",
+    "urgencyNote": "의무실 초동기록과 훈련 통제관 메모를 오늘 중 추가 확보할 필요가 있습니다.",
+    "timeline": [
+      {
+        "id": "case-003-tl-01",
+        "type": "question_requested",
+        "title": "현장 손전등 사용 여부 추가 질문",
+        "description": "시야 확보 상태와 접촉 강도를 판단하기 위한 추가 질문이 생성되었습니다.",
+        "occurredAt": "2026-03-18T06:20:00.000Z",
+        "actor": "LawFlow LLM",
+        "relatedQuestionId": "question-004",
+        "relatedDocumentId": "doc-010"
+      },
+      {
+        "id": "case-003-tl-02",
+        "type": "question_answered",
+        "title": "의무실 방문 여부 답변 반영",
+        "description": "피의자 진술 요약서에 의무실 방문 시점과 처치 내용이 반영되었습니다.",
+        "occurredAt": "2026-03-16T10:50:00.000Z",
+        "actor": "중위 박세린",
+        "relatedQuestionId": "question-003",
+        "relatedDocumentId": "doc-010"
+      },
+      {
+        "id": "case-003-tl-03",
+        "type": "question_answered",
+        "title": "가해 주장 시점 보완",
+        "description": "접촉 발생 시점을 재확인하는 답변이 제출되어 문서 초안이 재생성되었습니다.",
+        "occurredAt": "2026-03-15T07:20:00.000Z",
+        "actor": "중위 박세린",
+        "relatedQuestionId": "question-002",
+        "relatedDocumentId": "doc-010"
+      },
+      {
+        "id": "case-003-tl-04",
+        "type": "document_generated",
+        "title": "참고인 진술서 초안 완료",
+        "description": "의무병과 통제관 진술을 종합한 참고인 진술서 초안이 생성되었습니다.",
+        "occurredAt": "2026-03-13T13:00:00.000Z",
+        "actor": "문서 생성 엔진",
+        "relatedDocumentId": "doc-011"
+      },
+      {
+        "id": "case-003-tl-05",
+        "type": "case_created",
+        "title": "사건 등록",
+        "description": "훈련 중 폭행 시비 조사 사건이 등록되었습니다.",
+        "occurredAt": "2026-03-09T13:00:00.000Z",
+        "actor": "중위 박세린"
+      }
+    ],
+    "documents": [],
+    "questions": []
+  },
+  {
+    "id": "case-004",
+    "title": "외부 민원 대응 사실확인",
+    "caseType": "other",
+    "status": "draft",
+    "occurredAt": "2026-03-17T01:40:00.000Z",
+    "location": "민원상담실 및 정보통신반",
+    "author": "주무관 한민아",
+    "relatedPersons": ["민원인 이소정", "행정보조원 곽민석"],
+    "summary": "민원 접수 경위와 내부 전달 절차를 정리하는 사실확인 중심의 기타 사건입니다.",
+    "details": "민원인이 제출한 자료 일부가 내부 전달 과정에서 누락되었다는 이의가 제기되었습니다. 현재 접수 시점, 문서 전달 경로, 관련 부서 확인 여부를 기초적으로 정리하는 단계입니다.",
+    "priority": "low",
+    "createdAt": "2026-03-17T02:15:00.000Z",
+    "updatedAt": "2026-03-18T11:00:00.000Z",
+    "progressPercent": 18,
+    "activeQuestionCount": 0,
+    "documentCount": 3,
+    "attachmentProvided": true,
+    "legalReviewSummary": "형사 또는 징계 성격보다는 행정적 사실확인과 대응 기록 확보가 핵심입니다. 민원 대응 경위와 전달 누락 여부를 우선 정리한 뒤 후속 조치 필요성을 판단해야 합니다.",
+    "urgencyNote": "민원 회신 기한이 임박해 있어 사실확인 메모의 초안을 빠르게 완성할 필요가 있습니다.",
+    "timeline": [
+      {
+        "id": "case-004-tl-01",
+        "type": "document_generated",
+        "title": "사실관계 확인 메모 초안 생성",
+        "description": "민원 접수 시각과 부서 전달 흐름을 기준으로 초안이 작성되었습니다.",
+        "occurredAt": "2026-03-18T11:00:00.000Z",
+        "actor": "문서 생성 엔진",
+        "relatedDocumentId": "doc-014"
+      },
+      {
+        "id": "case-004-tl-02",
+        "type": "case_created",
+        "title": "사건 등록",
+        "description": "외부 민원 대응 사실확인 사건이 등록되었습니다.",
+        "occurredAt": "2026-03-17T02:15:00.000Z",
+        "actor": "주무관 한민아"
+      }
+    ],
+    "documents": [],
+    "questions": []
+  },
+  {
+    "id": "case-005",
+    "title": "보안수칙 위반 관련 징계 검토",
+    "caseType": "disciplinary",
+    "status": "in_progress",
+    "occurredAt": "2026-03-11T08:20:00.000Z",
+    "location": "정보보호통제실",
+    "author": "대위 서유진",
+    "relatedPersons": ["중사 김하린", "병장 유태오"],
+    "summary": "보안수칙 위반 행위에 대한 징계 수준을 검토 중이며 제출 직전까지 정리된 사건입니다.",
+    "details": "업무용 저장매체 반출 승인 절차가 누락된 채 외부 장비 연결이 이루어진 사실이 감사 로그로 확인되었습니다. 행위 경위는 대체로 정리되었으며, 고의성 및 재발 방지 조치 수준을 중심으로 최종 문서 보완이 진행 중입니다.",
+    "priority": "high",
+    "createdAt": "2026-03-11T09:10:00.000Z",
+    "updatedAt": "2026-03-18T15:10:00.000Z",
+    "progressPercent": 76,
+    "activeQuestionCount": 0,
+    "documentCount": 4,
+    "attachmentProvided": true,
+    "legalReviewSummary": "행위 사실과 승인 누락 경위는 대부분 확인되었고, 징계 수위 판단에 필요한 감경 요소와 재발 방지 조치만 정리하면 됩니다. 제출 전 최종 검토표와 징계 수준 검토표의 표현을 일관되게 맞추는 것이 중요합니다.",
+    "urgencyNote": "지휘관 결재선 보고 전에 징계 수준 검토 문구를 정제해야 합니다.",
+    "timeline": [
+      {
+        "id": "case-005-tl-01",
+        "type": "document_generated",
+        "title": "최종 점검표 재생성",
+        "description": "감사 로그와 재발 방지 조치 항목이 반영된 최종 점검표가 갱신되었습니다.",
+        "occurredAt": "2026-03-18T15:10:00.000Z",
+        "actor": "문서 생성 엔진",
+        "relatedDocumentId": "doc-020"
+      },
+      {
+        "id": "case-005-tl-02",
+        "type": "document_completed",
+        "title": "경위 확인서 완료",
+        "description": "승인 누락 경위와 당시 근무 배치가 반영된 경위 확인서가 완료되었습니다.",
+        "occurredAt": "2026-03-16T10:30:00.000Z",
+        "actor": "문서 생성 엔진",
+        "relatedDocumentId": "doc-018"
+      },
+      {
+        "id": "case-005-tl-03",
+        "type": "case_created",
+        "title": "사건 등록",
+        "description": "보안수칙 위반 관련 징계 검토 사건이 등록되었습니다.",
+        "occurredAt": "2026-03-11T09:10:00.000Z",
+        "actor": "대위 서유진"
+      }
+    ],
+    "documents": [],
+    "questions": []
+  }
+]
