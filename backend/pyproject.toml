@@ -1,0 +1,31 @@
+[project]
+name = "law-corpus-backend"
+version = "0.1.0"
+description = "Canonical law corpus backend with ingestion, storage abstractions, search, and graph APIs."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+  "fastapi>=0.115.8,<1.0.0",
+  "httpx>=0.28.1,<1.0.0",
+  "pydantic>=2.10.6,<3.0.0",
+  "pydantic-settings>=2.7.1,<3.0.0",
+  "uvicorn>=0.34.0,<1.0.0",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3.4,<9.0.0",
+  "pytest-asyncio>=0.25.3,<1.0.0",
+]
+
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["documents", "eval", "ingestion", "storage", "search", "graph", "schemas"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
