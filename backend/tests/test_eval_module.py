@@ -6,7 +6,9 @@ from pathlib import Path
 import pytest
 
 from documents import DocumentGenerationService, DocumentGenerationSettings, EvidenceCollector, InProcessRelatedArticlesClient
+from eval.__main__ import _load_thresholds
 from eval import (
+    EvalGoldCase,
     EvaluationRunner,
     EvaluationThresholds,
     GenerationEvalService,
@@ -155,3 +157,100 @@ async def test_eval_quality_gate(tmp_path: Path) -> None:
     assert failing_result.passed is False
     with pytest.raises(QualityGateError):
         assert_quality_gate(report, failing_thresholds)
+
+
+@pytest.mark.asyncio
+async def test_generation_eval_uses_final_generation_evidence_pack() -> None:
+    fixture = seed_related_article_fixture()
+    document_service = DocumentGenerationService(
+        evidence_collector=EvidenceCollector(
+            related_articles_client=InProcessRelatedArticlesClient(fixture.service),
+            repository=fixture.repository,
+            text_search_store=fixture.text_search_store,
+        ),
+        settings=DocumentGenerationSettings(),
+    )
+    generation_eval = GenerationEvalService(document_service, judge=HeuristicJudgeScorer())
+
+    report, artifacts = await generation_eval.evaluate(
+        [
+            EvalGoldCase(
+                case_id="gold-clarify-plan-loop",
+                user_text="폭행이 문제입니다.",
+                as_of_date="2024-03-01",
+                gold_article_ids=[fixture.ids["criminal_assault"]],
+                allowed_law_groups=["형법"],
+                doc_type="defense_draft",
+                expected_claim_keyphrases=["폭행", "신체", "피해자"],
+            )
+        ],
+        build_context(),
+    )
+
+    artifact = artifacts[0]
+    artifact_evidence_ids = {item.evidence_id for item in artifact.evidence_pack.all_items()}
+    used_evidence_ids = set(artifact.response.evidence_report.used_evidence_ids)
+
+    assert artifact.response.evidence_report.source_mode == "clarify"
+    assert any(evidence_id.startswith("law:") for evidence_id in used_evidence_ids)
+    assert used_evidence_ids.issubset(artifact_evidence_ids)
+    assert report.case_results[0].metrics["citation_correctness"] > 0
+    assert fixture.service.structuring_service._sessions == {}
+
+
+@pytest.mark.asyncio
+async def test_retrieval_eval_marks_missing_gold_as_retrieval_stage() -> None:
+    fixture = seed_related_article_fixture()
+    retrieval_eval = RetrievalEvalService(
+        repository=fixture.repository,
+        graph_store=fixture.graph_store,
+        text_search_store=fixture.text_search_store,
+        vector_store=fixture.vector_store,
+        structuring_service=fixture.service.structuring_service,
+        router=fixture.service.router,
+    )
+
+    report = await retrieval_eval.evaluate(
+        [
+            EvalGoldCase(
+                case_id="gold-missing-corpus",
+                user_text="병사가 상관의 명령을 거부했습니다.",
+                as_of_date="2024-03-01",
+                gold_article_ids=["kr:missing-law:v1:article-999999"],
+                allowed_law_groups=["군복무규율"],
+                doc_type="disciplinary_opinion",
+            )
+        ],
+        build_context(),
+        experiments=["hybrid"],
+        k_values=[1, 3],
+    )
+
+    assert report.case_results[0].stage == "retrieval"
+    assert "gold_missing_from_corpus" in report.case_results[0].failure_tags
+    assert fixture.service.structuring_service._sessions == {}
+
+
+def test_load_thresholds_accepts_long_inline_json() -> None:
+    raw = json.dumps(
+        {
+            "retrieval": [
+                {
+                    "experiment": "hybrid",
+                    "min_metrics": {
+                        "recall@5": 0.5,
+                        "precision@5": 0.25,
+                        "ndcg@5": 0.4,
+                        "long_padding_metric_name_" + ("x" * 300): 0.1,
+                    },
+                }
+            ],
+            "generation": {"min_citation_coverage": 0.5},
+        },
+        ensure_ascii=False,
+    )
+
+    thresholds = _load_thresholds(raw)
+
+    assert thresholds is not None
+    assert thresholds.retrieval[0].experiment == "hybrid"

@@ -1,6 +1,5 @@
-import type { CaseDetail } from '../types/case';
+import type { CaseDetail, CaseSummary, WorkflowStage, WorkflowStageId } from '../types/case';
 import type { DashboardMetrics, DocumentStatus } from '../types/common';
-import type { CaseSummary } from '../types/case';
 
 const DOCUMENT_STATUS_SCORE: Record<DocumentStatus, number> = {
   pending: 18,
@@ -9,17 +8,36 @@ const DOCUMENT_STATUS_SCORE: Record<DocumentStatus, number> = {
   completed: 100,
 };
 
-export interface WorkflowStep {
-  id: WorkflowStepId;
-  title: string;
-  caption: string;
-  description: string;
-  detail: string;
-  completed: boolean;
-  active: boolean;
-}
-
-export type WorkflowStepId = 'created' | 'facts' | 'documents' | 'question' | 'completed' | 'submitted';
+export const WORKFLOW_STAGE_META: Record<
+  WorkflowStageId,
+  Pick<WorkflowStage, 'title' | 'caption' | 'description'>
+> = {
+  case_registration: {
+    title: '새 사건 등록',
+    caption: '1단계',
+    description: '사건 기본 정보와 관련 사실관계를 등록합니다.',
+  },
+  attachment_registration: {
+    title: '첨부 자료 등록',
+    caption: '2단계',
+    description: '필요한 첨부 자료를 등록하고, 없으면 이 단계를 건너뜁니다.',
+  },
+  information_request: {
+    title: '필요한 정보 요청',
+    caption: '3단계',
+    description: 'LLM이 문서 작성을 위해 필요한 추가 정보를 요청합니다.',
+  },
+  document_generation: {
+    title: '문서 생성',
+    caption: '4단계',
+    description: '최종적으로 필요한 문서 초안과 패키지를 생성합니다.',
+  },
+  review_feedback: {
+    title: '문서 검토 및 유저 피드백',
+    caption: '5단계',
+    description: '생성된 문서를 검토하고 사용자 피드백을 반영해 재검토합니다.',
+  },
+};
 
 export function calculateProgressByDocuments(statuses: DocumentStatus[]) {
   if (!statuses.length) {
@@ -39,87 +57,75 @@ export function calculateMetrics(cases: CaseSummary[]): DashboardMetrics {
   };
 }
 
-export function buildWorkflowSteps(caseDetail: CaseDetail): WorkflowStep[] {
-  const documentsCompleted = caseDetail.documents.every((document) => document.status === 'completed');
-  const hasQuestions = caseDetail.questions.length > 0;
-  const hasOpenQuestion = caseDetail.questions.some((question) => question.status === 'open');
-  const hasGeneratedDocument = caseDetail.documents.some(
-    (document) => document.status === 'completed' || document.status === 'generating',
-  );
-  const activeStepId: WorkflowStepId = hasOpenQuestion
-    ? 'question'
-    : documentsCompleted
-      ? caseDetail.status === 'completed'
-        ? 'submitted'
-        : 'completed'
-      : hasGeneratedDocument
-        ? 'completed'
-        : caseDetail.documents.length > 0
-          ? 'documents'
-          : 'facts';
+export function buildWorkflowStages(caseDetail: CaseDetail): WorkflowStage[] {
+  const documentsCompleted =
+    caseDetail.documents.length > 0 && caseDetail.documents.every((document) => document.status === 'completed');
+  const openQuestions = caseDetail.questions.filter((question) => question.status === 'open');
+  const answeredQuestions = caseDetail.questions.filter((question) => question.status === 'answered');
+  const documentsNeedingInput = caseDetail.documents.filter((document) => document.status === 'needs_input').length;
+  const generatingDocuments = caseDetail.documents.filter((document) => document.status === 'generating').length;
+  const pendingDocuments = caseDetail.documents.filter((document) => document.status === 'pending').length;
+  const reviewItems = caseDetail.documents.flatMap((document) => document.reviewHistory);
+  const openReviews = reviewItems.filter((item) => item.status === 'open').length;
+  const resolvedReviews = reviewItems.filter((item) => item.status === 'resolved').length;
+  const hasReviewHistory = reviewItems.length > 0;
 
   return [
     {
-      id: 'created',
-      title: '사건 등록',
-      caption: '1단계',
-      description: '기본 사건 식별 정보와 우선순위를 등록했습니다.',
-      detail: `${caseDetail.author} 작성자가 사건을 등록하고 기초 메타데이터를 확정했습니다.`,
-      completed: true,
-      active: false,
+      id: 'case_registration',
+      ...WORKFLOW_STAGE_META.case_registration,
+      detail: `${caseDetail.author} 작성자가 사건을 등록하고 발생 시점, 관련자, 사실관계를 입력했습니다.`,
+      status: 'completed',
     },
     {
-      id: 'facts',
-      title: '사실관계 입력',
-      caption: '2단계',
-      description: '사건 개요와 상세 사실관계를 입력해 문서 생성 기반을 마련합니다.',
-      detail: caseDetail.details,
-      completed: Boolean(caseDetail.details),
-      active: activeStepId === 'facts',
+      id: 'attachment_registration',
+      ...WORKFLOW_STAGE_META.attachment_registration,
+      detail: caseDetail.attachmentProvided
+        ? caseDetail.attachmentSummary || '첨부 자료가 등록되어 이후 문서 생성에 활용됩니다.'
+        : '첨부 자료 없이 진행하기로 선택해 이 단계를 건너뛰었습니다.',
+      status: caseDetail.attachmentProvided ? 'completed' : 'skipped',
     },
     {
-      id: 'documents',
-      title: '문서 목록 생성',
-      caption: '3단계',
-      description: '사건 유형에 맞는 필수 문서 패키지를 자동 구성했습니다.',
-      detail: `${caseDetail.documents.length}개의 문서가 생성 흐름에 연결되어 있습니다.`,
-      completed: caseDetail.documents.length > 0,
-      active: activeStepId === 'documents',
+      id: 'information_request',
+      ...WORKFLOW_STAGE_META.information_request,
+      detail:
+        openQuestions.length > 0
+          ? `${openQuestions.length}건의 추가 정보 요청이 열려 있으며, ${
+              documentsNeedingInput > 0 ? `${documentsNeedingInput}개 문서가 답변을 기다리고 있습니다.` : '관련 문서가 답변을 기다리고 있습니다.'
+            }`
+          : answeredQuestions.length > 0
+            ? `${answeredQuestions.length}건의 요청 정보가 반영되어 문서 작성이 다시 진행 중입니다.`
+            : '현재까지 추가 정보 요청 없이 문서 생성이 진행되고 있습니다.',
+      status:
+        openQuestions.length > 0 || documentsNeedingInput > 0
+          ? 'active'
+          : answeredQuestions.length > 0
+            ? 'completed'
+            : 'skipped',
     },
     {
-      id: 'question',
-      title: '추가 질문',
-      caption: '4단계',
-      description: '부족한 사실관계를 보완하기 위해 LLM이 추가 정보를 요청합니다.',
-      detail: hasQuestions
-        ? `${caseDetail.questions.length}건의 질문 기록이 있으며, 현재 ${
-            hasOpenQuestion ? '응답 대기 중인 질문이 있습니다.' : '모든 질문이 처리되었습니다.'
-          }`
-        : '현재까지 추가 질문은 발생하지 않았습니다.',
-      completed: hasQuestions && !hasOpenQuestion,
-      active: activeStepId === 'question',
-    },
-    {
-      id: 'completed',
-      title: '문서 완성',
-      caption: '5단계',
-      description: '문서 초안이 보완되고 법률 근거가 연결됩니다.',
+      id: 'document_generation',
+      ...WORKFLOW_STAGE_META.document_generation,
       detail: documentsCompleted
-        ? '모든 문서가 완료 상태입니다.'
-        : '일부 문서는 생성 중이거나 추가 정보 확인이 필요합니다.',
-      completed: documentsCompleted,
-      active: activeStepId === 'completed',
+        ? `${caseDetail.documents.length}개의 문서가 모두 생성 완료되었습니다.`
+        : `${caseDetail.documents.length}개 문서 중 ${generatingDocuments}개 작성 중, ${pendingDocuments}개 대기, ${documentsNeedingInput}개 추가 정보 필요 상태입니다.`,
+      status: documentsCompleted
+        ? 'completed'
+        : caseDetail.documents.length === 0 || openQuestions.length > 0 || documentsNeedingInput > 0
+          ? 'pending'
+          : 'active',
     },
     {
-      id: 'submitted',
-      title: '법무관 제출',
-      caption: '6단계',
-      description: '최종 검토가 끝난 문서 패키지를 보고 체계에 맞춰 제출합니다.',
-      detail: documentsCompleted
-        ? '제출 직전 상태입니다. 최종 결재 라인 확인만 남았습니다.'
-        : '제출 전 필수 문서와 질문 응답 상태를 먼저 정리해야 합니다.',
-      completed: caseDetail.status === 'completed',
-      active: activeStepId === 'submitted',
+      id: 'review_feedback',
+      ...WORKFLOW_STAGE_META.review_feedback,
+      detail: !documentsCompleted
+        ? '문서 생성이 완료되면 검토와 피드백 반영 단계로 넘어갑니다.'
+        : openReviews > 0
+          ? `${openReviews}건의 검토 요청이 열려 있으며, 사용자 피드백 반영이 필요합니다.`
+          : hasReviewHistory
+            ? `${resolvedReviews}건의 검토 이력이 정리되었고 현재 열린 피드백은 없습니다.`
+            : '검토 요청 없이 문서 패키지가 마무리되었습니다.',
+      status: !documentsCompleted ? 'pending' : openReviews > 0 ? 'active' : 'completed',
     },
   ];
 }

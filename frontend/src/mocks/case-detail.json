@@ -17,6 +17,7 @@
     "activeQuestionCount": 1,
     "documentCount": 4,
     "attachmentProvided": true,
+    "attachmentSummary": "CCTV 캡처본 6장, 창고 출입기록 CSV, 재물 관리대장 사본, 창고 책임관 메모 1부가 등록되었습니다.",
     "legalReviewSummary": "현재까지 확보된 자료만으로는 반출 승인 여부와 물품 수량 차이의 원인을 단정하기 어렵습니다. 다만 무단 반출 정황이 존재하므로 관련 진술서와 경위서의 정합성을 우선 확보해야 하며, 압수물 목록 확인이 완료되면 군용물 관리 위반 여부 판단이 가능해집니다.",
     "urgencyNote": "지휘관 보고 예정 시각 이전까지 압수물 수량과 보관 위치를 확정해야 합니다.",
     "timeline": [
@@ -78,6 +79,7 @@
     "activeQuestionCount": 0,
     "documentCount": 4,
     "attachmentProvided": true,
+    "attachmentSummary": "복무일지, 순찰기록, 근무 배치표, 소명기회 제출 서류가 첨부 자료로 등록되었습니다.",
     "legalReviewSummary": "징계 사유의 반복성과 사전 경고 이력이 모두 확보되어 징계위 제출 요건이 충족되었습니다. 피징계자 소명 기회 부여와 조사기록 정리도 완료되어, 제출 직전 상태로 판단됩니다.",
     "urgencyNote": "이번 주 징계위원회 상정 일정에 맞춰 제출 패키지를 유지하면 됩니다.",
     "timeline": [
@@ -137,6 +139,7 @@
     "activeQuestionCount": 1,
     "documentCount": 5,
     "attachmentProvided": false,
+    "attachmentSummary": "",
     "legalReviewSummary": "참고인 진술은 확보되었으나 당사자 진술의 시점·행위 방식이 서로 달라 폭행 성립 여부보다 사실관계 정합성 확보가 우선입니다. 추가 질문을 통해 접촉 강도, 선행 지시, 현장 배치 상황을 정리한 뒤 최종 의견서를 작성해야 합니다.",
     "urgencyNote": "의무실 초동기록과 훈련 통제관 메모를 오늘 중 추가 확보할 필요가 있습니다.",
     "timeline": [
@@ -209,6 +212,7 @@
     "activeQuestionCount": 0,
     "documentCount": 3,
     "attachmentProvided": true,
+    "attachmentSummary": "민원 접수 원본, 내부 전달 메일, 정보통신반 회신 초안이 첨부 자료로 등록되었습니다.",
     "legalReviewSummary": "형사 또는 징계 성격보다는 행정적 사실확인과 대응 기록 확보가 핵심입니다. 민원 대응 경위와 전달 누락 여부를 우선 정리한 뒤 후속 조치 필요성을 판단해야 합니다.",
     "urgencyNote": "민원 회신 기한이 임박해 있어 사실확인 메모의 초안을 빠르게 완성할 필요가 있습니다.",
     "timeline": [
@@ -251,6 +255,7 @@
     "activeQuestionCount": 0,
     "documentCount": 4,
     "attachmentProvided": true,
+    "attachmentSummary": "감사 로그, 저장매체 반출 기록, 재발 방지 조치 계획안이 첨부 자료로 등록되었습니다.",
     "legalReviewSummary": "행위 사실과 승인 누락 경위는 대부분 확인되었고, 징계 수위 판단에 필요한 감경 요소와 재발 방지 조치만 정리하면 됩니다. 제출 전 최종 검토표와 징계 수준 검토표의 표현을 일관되게 맞추는 것이 중요합니다.",
     "urgencyNote": "지휘관 결재선 보고 전에 징계 수준 검토 문구를 정제해야 합니다.",
     "timeline": [

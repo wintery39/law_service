@@ -5,15 +5,35 @@ from datetime import date
 import json
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket
+from case_management import (
+    CaseCreatePayload,
+    CaseDetail,
+    CaseSummary,
+    DashboardMetrics,
+    DocumentDetail,
+    DocumentRecord,
+    FrontendCaseManagementService,
+    LegalBasisEntry,
+    QuestionAnswerPayload,
+    QuestionRecord,
+)
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from pydantic import ValidationError
 
-from documents import DocumentGenerationService, DocumentGenerationSettings, EvidenceCollector, InProcessRelatedArticlesClient
+from documents import (
+    DocumentGenerationService,
+    DocumentGenerationSettings,
+    EvidenceCollector,
+    InProcessRelatedArticlesClient,
+    build_document_stream_error_event,
+)
 from graph import InMemoryGraphStore
 from ingestion import CanonicalLawTransformer, IngestionService, OpenLawApiClient, OpenLawApiSettings
 from schemas import (
+    CaseDocumentGenerationRequest,
     ClarifyResponse,
-    DocumentGenerationRequest,
     DocumentGenerationResponse,
     GraphNeighborsResponse,
     IngestLawRequest,
@@ -24,6 +44,7 @@ from schemas import (
     ResultResponse,
     TextSearchResponse,
     VersionSelectionResponse,
+    build_document_generation_request,
 )
 from search import InMemoryTextSearchStore, RelatedArticleFinderService, RelatedArticleFinderSettings
 from storage import InMemoryCorpusRepository, InMemoryVectorStore
@@ -35,6 +56,7 @@ class ServiceContainer:
         self.graph_store = InMemoryGraphStore()
         self.text_search_store = InMemoryTextSearchStore()
         self.vector_store = InMemoryVectorStore()
+        self.case_management_service = FrontendCaseManagementService()
         self.api_client = OpenLawApiClient(settings=OpenLawApiSettings())
         self.transformer = CanonicalLawTransformer()
         self.ingestion_service = IngestionService(
@@ -72,6 +94,12 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Law Corpus Backend", version="0.1.0", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.middleware("http")
@@ -98,6 +126,74 @@ def build_context(
 @app.get("/health")
 async def health() -> dict[str, object]:
     return {"status": "ok", "entity_counts": container.repository.count_entities()}
+
+
+@app.get("/api/cases", response_model=list[CaseSummary])
+async def list_cases() -> list[CaseSummary]:
+    return container.case_management_service.get_cases()
+
+
+@app.get("/api/cases/metrics", response_model=DashboardMetrics)
+async def get_case_metrics() -> DashboardMetrics:
+    return container.case_management_service.get_case_metrics()
+
+
+@app.get("/api/cases/{case_id}", response_model=CaseDetail)
+async def get_case_detail(case_id: str) -> CaseDetail:
+    try:
+        return container.case_management_service.get_case_by_id(case_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.post("/api/cases", response_model=CaseDetail, status_code=201)
+async def create_case(payload: CaseCreatePayload) -> CaseDetail:
+    return container.case_management_service.create_case(payload)
+
+
+@app.get("/api/cases/{case_id}/documents", response_model=list[DocumentRecord])
+async def get_case_documents(case_id: str) -> list[DocumentRecord]:
+    try:
+        return container.case_management_service.get_documents_by_case_id(case_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.get("/api/cases/{case_id}/documents/{document_id}", response_model=DocumentDetail)
+async def get_document_detail(case_id: str, document_id: str) -> DocumentDetail:
+    try:
+        return container.case_management_service.get_document_by_id(case_id, document_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.get("/api/cases/{case_id}/questions", response_model=list[QuestionRecord])
+async def get_case_questions(case_id: str) -> list[QuestionRecord]:
+    try:
+        return container.case_management_service.get_questions_by_case_id(case_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.get("/api/cases/{case_id}/questions/open", response_model=list[QuestionRecord])
+async def get_open_questions(case_id: str) -> list[QuestionRecord]:
+    try:
+        return container.case_management_service.get_open_questions(case_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.post("/api/questions/{question_id}/answer", response_model=CaseDetail)
+async def answer_question(question_id: str, payload: QuestionAnswerPayload) -> CaseDetail:
+    try:
+        return container.case_management_service.submit_question_answer(question_id, payload.answer)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.get("/api/legal-basis", response_model=list[LegalBasisEntry])
+async def get_legal_basis(ids: list[str] = Query(default=[])) -> list[LegalBasisEntry]:
+    return container.case_management_service.get_legal_basis_by_ids(ids)
 
 
 @app.post("/ingestions/laws", response_model=IngestLawResponse)
@@ -183,11 +279,12 @@ async def find_related_articles(
 
 @app.post("/services/documents/generate", response_model=DocumentGenerationResponse)
 async def generate_document(
-    payload: DocumentGenerationRequest,
+    payload: CaseDocumentGenerationRequest,
     context: ObservationContext = Depends(build_context),
 ) -> DocumentGenerationResponse:
     try:
-        return await container.document_generation_service.generate(payload, context)
+        request = build_document_generation_request(payload)
+        return await container.document_generation_service.generate(request, context)
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except RuntimeError as error:
@@ -196,11 +293,17 @@ async def generate_document(
 
 @app.post("/services/documents/generate/stream")
 async def stream_document_generation(
-    payload: DocumentGenerationRequest,
+    payload: CaseDocumentGenerationRequest,
     context: ObservationContext = Depends(build_context),
 ) -> StreamingResponse:
     async def event_stream():
-        async for event in container.document_generation_service.stream(payload, context):
+        try:
+            request = build_document_generation_request(payload)
+            async for event in container.document_generation_service.stream(request, context):
+                body = json.dumps(event.model_dump(mode="json"), ensure_ascii=False)
+                yield f"event: {event.event}\ndata: {body}\n\n"
+        except Exception as error:
+            event = build_document_stream_error_event(error)
             body = json.dumps(event.model_dump(mode="json"), ensure_ascii=False)
             yield f"event: {event.event}\ndata: {body}\n\n"
 
@@ -210,12 +313,37 @@ async def stream_document_generation(
 @app.websocket("/services/documents/generate/ws")
 async def generate_document_websocket(websocket: WebSocket) -> None:
     await websocket.accept()
-    payload = DocumentGenerationRequest.model_validate(await websocket.receive_json())
+    try:
+        payload = CaseDocumentGenerationRequest.model_validate(await websocket.receive_json())
+    except WebSocketDisconnect:
+        return
+    except (ValidationError, ValueError, TypeError) as error:
+        await websocket.send_json(build_document_stream_error_event(error).model_dump(mode="json"))
+        await websocket.close(code=1008)
+        return
+    except Exception as error:
+        await websocket.send_json(build_document_stream_error_event(error).model_dump(mode="json"))
+        await websocket.close(code=1008)
+        return
+
     context = ObservationContext(
         request_id=websocket.headers.get("x-request-id", uuid4().hex),
         corpus_version=websocket.headers.get("x-corpus-version", "v1"),
         ingestion_run_id=websocket.headers.get("x-ingestion-run-id", f"ing-{uuid4().hex}"),
     )
-    async for event in container.document_generation_service.stream(payload, context):
-        await websocket.send_json(event.model_dump(mode="json"))
-    await websocket.close()
+    request = build_document_generation_request(payload)
+    try:
+        async for event in container.document_generation_service.stream(request, context):
+            await websocket.send_json(event.model_dump(mode="json"))
+            if event.event == "error":
+                await websocket.close(code=1011)
+                return
+        await websocket.close()
+    except WebSocketDisconnect:
+        return
+    except Exception as error:
+        try:
+            await websocket.send_json(build_document_stream_error_event(error).model_dump(mode="json"))
+        except Exception:
+            pass
+        await websocket.close(code=1011)

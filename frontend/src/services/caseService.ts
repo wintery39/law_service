@@ -1,9 +1,10 @@
-import { mockApi } from './mockApi';
-import type { CaseCreatePayload } from '../types/case';
+import { apiClient } from './apiClient';
+import type { CaseCreatePayload, CaseDetail, CaseSummary } from '../types/case';
+import type { DashboardMetrics } from '../types/common';
 
 export const caseService = {
-  getCases: () => mockApi.getCases(),
-  getCaseMetrics: () => mockApi.getCaseMetrics(),
-  getCaseById: (caseId: string) => mockApi.getCaseById(caseId),
-  createCase: (payload: CaseCreatePayload) => mockApi.createCase(payload),
+  getCases: () => apiClient.get<CaseSummary[]>('/cases'),
+  getCaseMetrics: () => apiClient.get<DashboardMetrics>('/cases/metrics'),
+  getCaseById: (caseId: string) => apiClient.get<CaseDetail>(`/cases/${caseId}`),
+  createCase: (payload: CaseCreatePayload) => apiClient.post<CaseDetail>('/cases', payload),
 };

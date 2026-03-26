@@ -17,6 +17,7 @@ pnpm-debug.log*
 .env
 .env.*
 !.env.example
+!backend/.env.example
 
 # Frontend build artifacts
 frontend/node_modules/
@@ -30,3 +31,5 @@ backend/.venv/
 backend/.pytest_cache/
 backend/**/__pycache__/
 backend/**/*.pyc
+
+backend/mock_data/

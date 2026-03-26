@@ -24,6 +24,14 @@ from storage.observability import get_logger, log_info
 logger = get_logger(__name__)
 
 
+def build_document_stream_error_event(error: Exception) -> DocumentStreamEvent:
+    detail = str(error).strip() or error.__class__.__name__
+    return DocumentStreamEvent(
+        event="error",
+        data={"detail": detail, "error_type": type(error).__name__},
+    )
+
+
 @dataclass
 class DocumentGenerationSettings:
     operational_mode: bool = False
@@ -52,12 +60,25 @@ class DocumentGenerationService:
         context: ObservationContext,
     ) -> DocumentGenerationResponse:
         response: DocumentGenerationResponse | None = None
+        error_detail: str | None = None
         async for event in self.stream(request, context):
             if event.event == "complete":
                 response = DocumentGenerationResponse.model_validate(event.data["response"])
+            if event.event == "error":
+                error_detail = str(event.data.get("detail") or "document generation failed")
         if response is None:
-            raise RuntimeError("document generation did not complete")
+            raise RuntimeError(error_detail or "document generation did not complete")
         return response
+
+    async def generate_with_artifacts(
+        self,
+        request: DocumentGenerationRequest,
+        context: ObservationContext,
+    ) -> tuple[DocumentGenerationResponse, EvidencePack]:
+        evidence_pack, checklist_missing_info, _, plan = await self._prepare_generation(request, context)
+        sections = self._generate_sections(request, evidence_pack, plan, context)
+        response = self._build_response(request, plan, sections, evidence_pack, checklist_missing_info)
+        return response, evidence_pack
 
     async def stream(
         self,
@@ -70,16 +91,65 @@ class DocumentGenerationService:
             data={"session_id": request.session_id, "doc_type": request.user_intent.doc_type},
         )
 
-        evidence_pack, checklist_missing_info, evidence_debug = await self.evidence_collector.collect(request, context)
-        yield DocumentStreamEvent(
-            event="evidence",
-            data={
-                "checklist_missing_info": checklist_missing_info,
-                "totals_by_type": self._count_evidence(evidence_pack),
-                "source_debug": self._maybe_mask(evidence_debug),
-            },
-        )
+        try:
+            evidence_pack, checklist_missing_info, evidence_debug, plan = await self._prepare_generation(request, context)
+            yield DocumentStreamEvent(
+                event="evidence",
+                data={
+                    "checklist_missing_info": checklist_missing_info,
+                    "totals_by_type": self._count_evidence(evidence_pack),
+                    "source_debug": self._maybe_mask(evidence_debug),
+                },
+            )
+            yield DocumentStreamEvent(
+                event="plan",
+                data={
+                    "title": plan.title,
+                    "sections": [section.model_dump(mode="json") for section in plan.sections],
+                    "notes": plan.notes,
+                    "additional_retrieval_keywords": plan.additional_retrieval_keywords,
+                },
+            )
 
+            sections: list[SectionDraft] = []
+            for section_plan in plan.sections:
+                section = self.section_generator.generate_section(request, evidence_pack, section_plan, sections, context)
+                sections.append(section)
+                yield DocumentStreamEvent(event="section", data=section.model_dump(mode="json"))
+
+            response = self._build_response(request, plan, sections, evidence_pack, checklist_missing_info)
+            yield DocumentStreamEvent(
+                event="evaluation",
+                data={
+                    "warning_count": len(response.warnings),
+                    "warnings": [warning.model_dump(mode="json") for warning in response.warnings],
+                },
+            )
+            yield DocumentStreamEvent(event="complete", data={"response": response.model_dump(mode="json")})
+            log_info(
+                logger,
+                "document generation completed",
+                context,
+                doc_type=request.user_intent.doc_type,
+                section_count=len(sections),
+                warning_count=len(response.warnings),
+            )
+        except Exception as error:
+            logger.exception(
+                "document generation failed | request_id=%s corpus_version=%s ingestion_run_id=%s doc_type=%s",
+                context.request_id,
+                context.corpus_version,
+                context.ingestion_run_id,
+                request.user_intent.doc_type,
+            )
+            yield build_document_stream_error_event(error)
+
+    async def _prepare_generation(
+        self,
+        request: DocumentGenerationRequest,
+        context: ObservationContext,
+    ) -> tuple[EvidencePack, list[str], dict[str, object], DocumentPlan]:
+        evidence_pack, checklist_missing_info, evidence_debug = await self.evidence_collector.collect(request, context)
         plan = self.planner.create_plan(request, evidence_pack, checklist_missing_info, context)
         if self.settings.enable_plan_retrieval_loop and request.constraints.enable_plan_retrieval_loop:
             evidence_pack, loop_debug = self.evidence_collector.collect_additional_for_plan(
@@ -89,23 +159,28 @@ class DocumentGenerationService:
                 context,
             )
             plan.notes.append(f"추가 근거 회수: {len(loop_debug['added_ids'])}건")
+        return evidence_pack, checklist_missing_info, evidence_debug, plan
 
-        yield DocumentStreamEvent(
-            event="plan",
-            data={
-                "title": plan.title,
-                "sections": [section.model_dump(mode="json") for section in plan.sections],
-                "notes": plan.notes,
-                "additional_retrieval_keywords": plan.additional_retrieval_keywords,
-            },
-        )
-
+    def _generate_sections(
+        self,
+        request: DocumentGenerationRequest,
+        evidence_pack: EvidencePack,
+        plan: DocumentPlan,
+        context: ObservationContext,
+    ) -> list[SectionDraft]:
         sections: list[SectionDraft] = []
         for section_plan in plan.sections:
-            section = self.section_generator.generate_section(request, evidence_pack, section_plan, sections, context)
-            sections.append(section)
-            yield DocumentStreamEvent(event="section", data=section.model_dump(mode="json"))
+            sections.append(self.section_generator.generate_section(request, evidence_pack, section_plan, sections, context))
+        return sections
 
+    def _build_response(
+        self,
+        request: DocumentGenerationRequest,
+        plan: DocumentPlan,
+        sections: list[SectionDraft],
+        evidence_pack: EvidencePack,
+        checklist_missing_info: list[str],
+    ) -> DocumentGenerationResponse:
         draft = DocumentDraft(
             doc_type=request.user_intent.doc_type,
             title=plan.title,
@@ -114,27 +189,11 @@ class DocumentGenerationService:
         )
         warnings = self.evaluator.evaluate(request, plan, draft, evidence_pack)
         evidence_report = self._build_evidence_report(evidence_pack, sections)
-        response = DocumentGenerationResponse(
+        return DocumentGenerationResponse(
             draft=draft,
             checklist_missing_info=checklist_missing_info,
             evidence_report=evidence_report,
             warnings=warnings,
-        )
-        yield DocumentStreamEvent(
-            event="evaluation",
-            data={
-                "warning_count": len(warnings),
-                "warnings": [warning.model_dump(mode="json") for warning in warnings],
-            },
-        )
-        yield DocumentStreamEvent(event="complete", data={"response": response.model_dump(mode="json")})
-        log_info(
-            logger,
-            "document generation completed",
-            context,
-            doc_type=request.user_intent.doc_type,
-            section_count=len(sections),
-            warning_count=len(warnings),
         )
 
     def _compile_text(self, sections: list[SectionDraft]) -> str:

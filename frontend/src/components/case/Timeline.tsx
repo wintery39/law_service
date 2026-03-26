@@ -1,13 +1,17 @@
 import type { TimelineEvent } from '../../types/case';
 import { formatDateTime } from '../../utils/formatDate';
+import { WORKFLOW_STAGE_META } from '../../utils/progress';
 
 const toneByType: Record<TimelineEvent['type'], string> = {
-  case_created: 'bg-blue-500',
+  case_registered: 'bg-blue-500',
+  attachment_registered: 'bg-cyan-500',
+  attachment_skipped: 'bg-slate-400',
+  information_requested: 'bg-amber-500',
+  information_received: 'bg-emerald-500',
   document_generated: 'bg-indigo-500',
-  question_requested: 'bg-amber-500',
-  question_answered: 'bg-emerald-500',
   document_completed: 'bg-teal-500',
-  status_updated: 'bg-slate-500',
+  review_requested: 'bg-rose-500',
+  review_completed: 'bg-slate-500',
 };
 
 export function Timeline({ items }: { items: TimelineEvent[] }) {
@@ -20,7 +24,12 @@ export function Timeline({ items }: { items: TimelineEvent[] }) {
           </span>
           <div className="rounded-2xl bg-white px-4 py-4 shadow-soft">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <p className="font-semibold text-slate-950">{item.title}</p>
+              <div className="flex flex-col gap-2">
+                <span className="inline-flex w-fit rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-600">
+                  {WORKFLOW_STAGE_META[item.stageId].caption} · {WORKFLOW_STAGE_META[item.stageId].title}
+                </span>
+                <p className="font-semibold text-slate-950">{item.title}</p>
+              </div>
               <p className="text-xs text-slate-500">{formatDateTime(item.occurredAt)}</p>
             </div>
             <p className="mt-2 text-sm leading-6 text-slate-600">{item.description}</p>

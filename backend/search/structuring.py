@@ -277,6 +277,9 @@ class StructuredCaseService:
         self.max_retries = max_retries
         self._sessions: dict[str, StructuredCase] = {}
 
+    def clear_session(self, session_id: str) -> None:
+        self._sessions.pop(session_id, None)
+
     async def structure(
         self,
         request: RelatedArticleRequest,

@@ -5,6 +5,7 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import date, timedelta
+from pathlib import Path
 from time import monotonic
 from typing import Any
 from xml.etree import ElementTree
@@ -18,10 +19,16 @@ from storage.observability import get_logger, log_info
 
 
 logger = get_logger(__name__)
+BACKEND_DIR = Path(__file__).resolve().parents[1]
 
 
 class OpenLawApiSettings(BaseSettings):
-    model_config = ConfigDict(env_prefix="LAW_API_", extra="ignore")
+    model_config = ConfigDict(
+        env_prefix="LAW_API_",
+        env_file=BACKEND_DIR / ".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     oc: str = "test"
     base_url: str = "https://www.law.go.kr/DRF"

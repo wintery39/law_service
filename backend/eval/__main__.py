@@ -14,11 +14,18 @@ from schemas import ObservationContext
 def _load_thresholds(raw: str | None) -> EvaluationThresholds | None:
     if raw is None:
         return None
-    path = Path(raw)
-    if path.exists():
-        payload = json.loads(path.read_text(encoding="utf-8"))
+    candidate = raw.strip()
+    if candidate.startswith("{") or candidate.startswith("["):
+        payload = json.loads(candidate)
     else:
-        payload = json.loads(raw)
+        path = Path(candidate)
+        try:
+            if path.is_file():
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            else:
+                payload = json.loads(candidate)
+        except OSError:
+            payload = json.loads(candidate)
     return EvaluationThresholds.model_validate(payload)
 
 

@@ -10,20 +10,19 @@ from schemas import DocumentGenerationRequest, DocumentIntent, ObservationContex
 
 class JudgeScorer(ABC):
     @abstractmethod
-    def score(self, artifact: GenerationArtifact) -> dict[str, float]:
+    def score(self, artifact: GenerationArtifact, *, unsupported_claim_count: int = 0) -> dict[str, float]:
         raise NotImplementedError
 
 
 class HeuristicJudgeScorer(JudgeScorer):
-    def score(self, artifact: GenerationArtifact) -> dict[str, float]:
+    def score(self, artifact: GenerationArtifact, *, unsupported_claim_count: int = 0) -> dict[str, float]:
         warning_penalty = min(0.6, len(artifact.response.warnings) * 0.08)
-        unsupported_claims = artifact.response.metadata.get("unsupported_claim_count") if hasattr(artifact.response, "metadata") else None
-        _ = unsupported_claims
         coverage = artifact.response.evidence_report.section_coverage
         empty_sections = sum(1 for citations in coverage.values() if not citations)
         section_count = max(len(coverage), 1)
-        groundedness = max(0.0, 1.0 - (empty_sections / section_count) - warning_penalty)
-        overclaim_risk = min(1.0, (empty_sections / section_count) + warning_penalty)
+        unsupported_penalty = min(0.3, unsupported_claim_count * 0.1)
+        groundedness = max(0.0, 1.0 - (empty_sections / section_count) - warning_penalty - unsupported_penalty)
+        overclaim_risk = min(1.0, (empty_sections / section_count) + warning_penalty + unsupported_penalty)
         internal_consistency = max(0.0, 1.0 - (len(artifact.response.warnings) / max(section_count, 1)) * 0.4)
         return {
             "judge_groundedness": round(groundedness, 4),
@@ -55,8 +54,10 @@ class GenerationEvalService:
 
         for gold_case in gold_cases:
             doc_type = gold_case.doc_type or default_doc_type
+            session_id = f"eval-generation-{gold_case.case_id}"
+            self._clear_related_article_session(session_id)
             request = DocumentGenerationRequest(
-                session_id=f"eval-generation-{gold_case.case_id}",
+                session_id=session_id,
                 user_intent=DocumentIntent(doc_type=doc_type),
                 user_text=gold_case.user_text,
                 structured_case=gold_case.structured_case,
@@ -64,14 +65,16 @@ class GenerationEvalService:
                 jurisdiction=gold_case.jurisdiction,
                 constraints=gold_case.constraints,
             )
-            evidence_pack, _, _ = await self.document_service.evidence_collector.collect(request, context)
-            response = await self.document_service.generate(request, context)
-            artifact = GenerationArtifact(gold_case=gold_case, response=response, evidence_pack=evidence_pack)
-            artifacts.append(artifact)
-            case_result = self._evaluate_artifact(artifact)
-            case_results.append(case_result)
-            for metric_name, value in case_result.metrics.items():
-                summary_metrics.setdefault(metric_name, []).append(value)
+            try:
+                response, evidence_pack = await self.document_service.generate_with_artifacts(request, context)
+                artifact = GenerationArtifact(gold_case=gold_case, response=response, evidence_pack=evidence_pack)
+                artifacts.append(artifact)
+                case_result = self._evaluate_artifact(artifact)
+                case_results.append(case_result)
+                for metric_name, value in case_result.metrics.items():
+                    summary_metrics.setdefault(metric_name, []).append(value)
+            finally:
+                self._clear_related_article_session(session_id)
 
         report = GenerationEvaluationReport(
             summary={metric_name: round(average(values), 4) for metric_name, values in summary_metrics.items()},
@@ -140,7 +143,7 @@ class GenerationEvalService:
             "unsupported_claim_count": float(unsupported_claim_count),
         }
         if self.judge is not None:
-            metrics.update(self.judge.score(artifact))
+            metrics.update(self.judge.score(artifact, unsupported_claim_count=unsupported_claim_count))
 
         failure_tags: list[str] = []
         if metrics["citation_coverage"] < 1.0:
@@ -166,3 +169,11 @@ class GenerationEvalService:
                 "used_evidence_ids": response.evidence_report.used_evidence_ids,
             },
         )
+
+    def _clear_related_article_session(self, session_id: str) -> None:
+        collector = self.document_service.evidence_collector
+        client = getattr(collector, "related_articles_client", None)
+        service = getattr(client, "service", None)
+        structuring_service = getattr(service, "structuring_service", None)
+        if structuring_service is not None and hasattr(structuring_service, "clear_session"):
+            structuring_service.clear_session(session_id)

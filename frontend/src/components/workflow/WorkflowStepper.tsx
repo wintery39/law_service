@@ -1,16 +1,18 @@
-import type { WorkflowStep } from '../../utils/progress';
+import type { WorkflowStage } from '../../types/case';
 
 interface WorkflowStepperProps {
-  steps: WorkflowStep[];
+  steps: WorkflowStage[];
   selectedStepId: string;
   onSelect: (stepId: string) => void;
 }
 
 export function WorkflowStepper({ steps, selectedStepId, onSelect }: WorkflowStepperProps) {
   return (
-    <div className="grid gap-4 xl:grid-cols-6">
+    <div className="grid gap-4 xl:grid-cols-5">
       {steps.map((step, index) => {
         const isSelected = selectedStepId === step.id;
+        const isCompleted = step.status === 'completed' || step.status === 'skipped';
+        const isActive = step.status === 'active';
 
         return (
           <button
@@ -20,9 +22,9 @@ export function WorkflowStepper({ steps, selectedStepId, onSelect }: WorkflowSte
             className={`relative rounded-3xl border px-4 py-5 text-left shadow-soft transition ${
               isSelected
                 ? 'border-navy-900 bg-navy-900 text-white'
-                : step.completed
+                : isCompleted
                   ? 'border-emerald-200 bg-emerald-50 text-emerald-950'
-                  : step.active
+                  : isActive
                     ? 'border-amber-200 bg-amber-50 text-amber-950'
                     : 'border-white/60 bg-white/90 text-slate-900'
             }`}
@@ -33,9 +35,9 @@ export function WorkflowStepper({ steps, selectedStepId, onSelect }: WorkflowSte
                 className={`inline-flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold ${
                   isSelected
                     ? 'bg-white/20'
-                    : step.completed
+                    : isCompleted
                       ? 'bg-emerald-200/70 text-emerald-900'
-                      : step.active
+                      : isActive
                         ? 'bg-amber-200/70 text-amber-900'
                         : 'bg-slate-100 text-slate-700'
                 }`}

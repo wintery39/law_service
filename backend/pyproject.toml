@@ -23,7 +23,7 @@ requires = ["hatchling>=1.27.0"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["documents", "eval", "ingestion", "storage", "search", "graph", "schemas"]
+packages = ["case_management", "documents", "eval", "ingestion", "storage", "search", "graph", "schemas"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

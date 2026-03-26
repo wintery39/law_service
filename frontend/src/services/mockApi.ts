@@ -3,14 +3,29 @@ import rawCaseDetails from '../mocks/case-detail.json';
 import rawDocuments from '../mocks/documents.json';
 import rawQuestions from '../mocks/questions.json';
 import rawLegalBasis from '../mocks/legal-basis.json';
-import { calculateMetrics, calculateProgressByDocuments } from '../utils/progress';
-import type { CaseCreatePayload, CaseDetail, CaseSummary, TimelineEvent } from '../types/case';
+import { buildWorkflowStages, calculateMetrics, calculateProgressByDocuments } from '../utils/progress';
+import type { CaseCreatePayload, CaseDetail, CaseSummary, TimelineEvent, WorkflowStageId } from '../types/case';
 import type { CaseStatus, DashboardMetrics, DocumentStatus } from '../types/common';
 import type { DocumentDetail, DocumentRecord } from '../types/document';
 import type { LegalBasisEntry } from '../types/legalBasis';
 import type { QuestionRecord } from '../types/question';
 
-type SeedCaseDetail = Omit<CaseDetail, 'documents' | 'questions'> & {
+type LegacyTimelineEventType =
+  | 'case_created'
+  | 'document_generated'
+  | 'question_requested'
+  | 'question_answered'
+  | 'document_completed'
+  | 'status_updated';
+
+type SeedTimelineEvent = Omit<TimelineEvent, 'stageId' | 'type'> & {
+  stageId?: WorkflowStageId;
+  type: TimelineEvent['type'] | LegacyTimelineEventType;
+};
+
+type SeedCaseDetail = Omit<CaseDetail, 'attachmentSummary' | 'documents' | 'questions' | 'timeline' | 'workflowStages'> & {
+  attachmentSummary?: string;
+  timeline: SeedTimelineEvent[];
   documents: unknown[];
   questions: unknown[];
 };
@@ -36,6 +51,48 @@ let database = clone(seedDatabase);
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
+
+const LEGACY_TIMELINE_TYPE_MAP: Record<
+  LegacyTimelineEventType,
+  { type: TimelineEvent['type']; stageId: WorkflowStageId }
+> = {
+  case_created: {
+    type: 'case_registered',
+    stageId: 'case_registration',
+  },
+  document_generated: {
+    type: 'document_generated',
+    stageId: 'document_generation',
+  },
+  question_requested: {
+    type: 'information_requested',
+    stageId: 'information_request',
+  },
+  question_answered: {
+    type: 'information_received',
+    stageId: 'information_request',
+  },
+  document_completed: {
+    type: 'document_completed',
+    stageId: 'document_generation',
+  },
+  status_updated: {
+    type: 'review_completed',
+    stageId: 'review_feedback',
+  },
+};
+
+const TIMELINE_STAGE_MAP: Record<TimelineEvent['type'], WorkflowStageId> = {
+  case_registered: 'case_registration',
+  attachment_registered: 'attachment_registration',
+  attachment_skipped: 'attachment_registration',
+  information_requested: 'information_request',
+  information_received: 'information_request',
+  document_generated: 'document_generation',
+  document_completed: 'document_generation',
+  review_requested: 'review_feedback',
+  review_completed: 'review_feedback',
+};
 
 function simulate<T>(factory: () => T) {
   const delay = 280 + Math.floor(Math.random() * 360);
@@ -87,12 +144,89 @@ function getDocumentStatusProgress(documents: DocumentRecord[]) {
   return calculateProgressByDocuments(documents.map((document) => document.status));
 }
 
+function getAttachmentSummary(detail: Pick<SeedCaseDetail, 'attachmentProvided' | 'attachmentSummary'>) {
+  if (!detail.attachmentProvided) {
+    return '';
+  }
+
+  return detail.attachmentSummary?.trim() || '첨부 자료가 등록되어 문서 생성과 검토 단계의 기준 자료로 연결되었습니다.';
+}
+
+function normalizeTimelineEvent(event: SeedTimelineEvent): TimelineEvent {
+  if (event.stageId) {
+    return event as TimelineEvent;
+  }
+
+  const normalized = LEGACY_TIMELINE_TYPE_MAP[event.type as LegacyTimelineEventType];
+
+  if (!normalized) {
+    const type = event.type as TimelineEvent['type'];
+
+    return {
+      ...event,
+      type,
+      stageId: TIMELINE_STAGE_MAP[type],
+    };
+  }
+
+  return {
+    ...event,
+    type: normalized.type,
+    stageId: normalized.stageId,
+  };
+}
+
+function buildAttachmentTimelineEvent(detail: Pick<SeedCaseDetail, 'id' | 'createdAt' | 'author' | 'attachmentProvided' | 'attachmentSummary'>): TimelineEvent {
+  return {
+    id: `${detail.id}-timeline-attachment`,
+    stageId: 'attachment_registration',
+    type: detail.attachmentProvided ? 'attachment_registered' : 'attachment_skipped',
+    title: detail.attachmentProvided ? '첨부 자료 등록' : '첨부 자료 생략',
+    description: detail.attachmentProvided
+      ? getAttachmentSummary(detail)
+      : '첨부 자료 없이 다음 단계로 진행하도록 설정했습니다.',
+    occurredAt: detail.createdAt,
+    actor: detail.author,
+  };
+}
+
+function normalizeTimeline(
+  detail: Pick<SeedCaseDetail, 'id' | 'createdAt' | 'updatedAt' | 'author' | 'attachmentProvided' | 'attachmentSummary' | 'timeline'>,
+  documents: DocumentRecord[],
+) {
+  const events = detail.timeline.map(normalizeTimelineEvent);
+
+  if (!events.some((item) => item.stageId === 'attachment_registration')) {
+    events.push(buildAttachmentTimelineEvent(detail));
+  }
+
+  if (
+    documents.length > 0 &&
+    documents.every((document) => document.status === 'completed') &&
+    !events.some((item) => item.stageId === 'review_feedback')
+  ) {
+    events.push({
+      id: `${detail.id}-timeline-review`,
+      stageId: 'review_feedback',
+      type: 'review_completed',
+      title: '문서 검토 완료',
+      description: '최종 문서 검토가 끝나 사건 패키지가 완료 상태로 정리되었습니다.',
+      occurredAt: detail.updatedAt,
+      actor: 'LawFlow 시스템',
+    });
+  }
+
+  return events.sort((left, right) => Date.parse(right.occurredAt) - Date.parse(left.occurredAt));
+}
+
 function deriveCaseStatus(progressPercent: number, documents: DocumentRecord[], questions: QuestionRecord[]): CaseStatus {
   const hasDocuments = documents.length > 0;
   const allCompleted = hasDocuments && documents.every((document) => document.status === 'completed');
   const openQuestions = questions.filter((question) => question.status === 'open').length;
+  const openReviews = documents.flatMap((document) => document.reviewHistory).filter((item) => item.status === 'open')
+    .length;
 
-  if (allCompleted) {
+  if (allCompleted && openReviews === 0) {
     return 'completed';
   }
 
@@ -130,19 +264,24 @@ function syncCaseSummary(caseId: string) {
 
 function hydrateCaseDetail(caseId: string): CaseDetail {
   const { summary, detail } = ensureCase(caseId);
-
-  return {
+  const documents = getDocumentsForCase(caseId);
+  const questions = getQuestionsForCase(caseId);
+  const hydratedDetail: CaseDetail = {
     ...detail,
     ...summary,
     attachmentProvided: detail.attachmentProvided,
+    attachmentSummary: getAttachmentSummary(detail),
     legalReviewSummary: detail.legalReviewSummary,
     urgencyNote: detail.urgencyNote,
-    timeline: [...detail.timeline].sort(
-      (left, right) => Date.parse(right.occurredAt) - Date.parse(left.occurredAt),
-    ),
-    documents: getDocumentsForCase(caseId),
-    questions: getQuestionsForCase(caseId),
+    workflowStages: [],
+    timeline: normalizeTimeline(detail, documents),
+    documents,
+    questions,
   };
+
+  hydratedDetail.workflowStages = buildWorkflowStages(hydratedDetail);
+
+  return hydratedDetail;
 }
 
 function buildDocumentTemplates(payload: CaseCreatePayload, caseId: string) {
@@ -310,12 +449,14 @@ export const mockApi = {
       const detail: SeedCaseDetail = {
         ...summary,
         attachmentProvided: payload.attachmentProvided,
+        attachmentSummary: payload.attachmentSummary,
         legalReviewSummary:
           '사건 등록 직후 생성된 기본 검토 메모입니다. 문서 초안이 보완되면 적용 조항과 위험 포인트가 자동으로 정리됩니다.',
         urgencyNote: '현재는 초기 등록 단계이며, 추가 입력이나 후속 자료가 들어오면 상태가 갱신됩니다.',
         timeline: [
           {
             id: `${caseId}-timeline-003`,
+            stageId: 'document_generation',
             type: 'document_generated',
             title: '기본 문서 패키지 생성',
             description: `${documents.length}개의 기본 문서가 사건 유형에 맞춰 생성되었습니다.`,
@@ -324,15 +465,19 @@ export const mockApi = {
           },
           {
             id: `${caseId}-timeline-002`,
-            type: 'status_updated',
-            title: '사건 진행 상태 초기화',
-            description: '문서 생성 흐름이 시작되어 진행 상태가 설정되었습니다.',
+            stageId: 'attachment_registration',
+            type: payload.attachmentProvided ? 'attachment_registered' : 'attachment_skipped',
+            title: payload.attachmentProvided ? '첨부 자료 등록' : '첨부 자료 생략',
+            description: payload.attachmentProvided
+              ? payload.attachmentSummary || '첨부 자료가 등록되어 문서 생성 기준 자료로 연결되었습니다.'
+              : '첨부 자료 없이 다음 단계로 넘어가도록 설정했습니다.',
             occurredAt: now,
-            actor: 'LawFlow 시스템',
+            actor: payload.author,
           },
           {
             id: `${caseId}-timeline-001`,
-            type: 'case_created',
+            stageId: 'case_registration',
+            type: 'case_registered',
             title: '사건 등록',
             description: `${payload.title} 사건이 신규 등록되었습니다.`,
             occurredAt: now,
@@ -417,7 +562,8 @@ export const mockApi = {
 
       appendTimelineEvent(question.caseId, {
         id: `${question.caseId}-timeline-${Date.now()}`,
-        type: 'question_answered',
+        stageId: 'information_request',
+        type: 'information_received',
         title: '추가 질문 답변 반영',
         description: `${question.title}에 대한 답변이 제출되어 문서 초안이 갱신되었습니다.`,
         occurredAt: now,

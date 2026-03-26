@@ -18,6 +18,7 @@ from schemas.corpus import (
     Version,
 )
 from schemas.documents import (
+    CaseDocumentGenerationRequest,
     DocumentConstraints,
     DocumentDraft,
     DocumentGenerationRequest,
@@ -33,6 +34,7 @@ from schemas.documents import (
     EvidenceType,
     SectionDraft,
     SectionPlan,
+    build_document_generation_request,
 )
 from schemas.related_articles import (
     CaseAction,
@@ -56,6 +58,7 @@ from schemas.related_articles import (
 __all__ = [
     "AmendmentHistory",
     "AsOfQuery",
+    "CaseDocumentGenerationRequest",
     "CaseAction",
     "CaseActor",
     "CaseDamage",
@@ -102,4 +105,5 @@ __all__ = [
     "UserProfile",
     "Version",
     "VersionSelectionResponse",
+    "build_document_generation_request",
 ]

@@ -8,9 +8,8 @@ import { ProgressBar } from '../components/common/ProgressBar';
 import { StatusBadge } from '../components/common/StatusBadge';
 import { WorkflowStepper } from '../components/workflow/WorkflowStepper';
 import { caseService } from '../services/caseService';
-import type { CaseDetail } from '../types/case';
+import type { CaseDetail, WorkflowStage } from '../types/case';
 import type { AsyncStatus } from '../types/common';
-import { buildWorkflowSteps, type WorkflowStep } from '../utils/progress';
 
 export default function WorkflowPage() {
   const { caseId = '' } = useParams();
@@ -33,8 +32,10 @@ export default function WorkflowPage() {
         }
 
         setCaseDetail(detail);
-        const steps = buildWorkflowSteps(detail);
-        const activeStep = steps.find((step) => step.active) ?? steps[0];
+        const activeStep =
+          detail.workflowStages.find((step) => step.status === 'active') ??
+          [...detail.workflowStages].reverse().find((step) => step.status === 'completed') ??
+          detail.workflowStages[0];
         setSelectedStepId(activeStep.id);
         setStatus('success');
       } catch (loadError) {
@@ -63,26 +64,22 @@ export default function WorkflowPage() {
   }
 
   const detail = caseDetail;
-  const steps = buildWorkflowSteps(detail);
+  const steps = detail.workflowStages;
   const selectedStep = steps.find((step) => step.id === selectedStepId) ?? steps[0];
 
-  function renderSelectedStepPanel(step: WorkflowStep) {
+  function renderSelectedStepPanel(step: WorkflowStage) {
     switch (step.id) {
-      case 'documents':
+      case 'attachment_registration':
         return (
-          <div className="grid gap-3">
-            {detail.documents.map((document) => (
-              <div key={document.id} className="rounded-2xl bg-slate-50 px-4 py-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <p className="font-semibold text-slate-950">{document.title}</p>
-                  <StatusBadge type="document" value={document.status} />
-                </div>
-                <p className="mt-2 text-sm leading-6 text-slate-600">{document.description}</p>
-              </div>
-            ))}
+          <div className="rounded-3xl bg-slate-50 p-5">
+            <p className="text-sm leading-7 text-slate-700">
+              {detail.attachmentProvided
+                ? detail.attachmentSummary
+                : '첨부 자료 없이 진행 중이며, 이후 필요한 경우 문서 생성 단계에서 추가 자료 요청이 연결됩니다.'}
+            </p>
           </div>
         );
-      case 'question':
+      case 'information_request':
         return detail.questions.length > 0 ? (
           <div className="grid gap-3">
             {detail.questions.map((question) => (
@@ -97,26 +94,57 @@ export default function WorkflowPage() {
           </div>
         ) : (
           <EmptyState
-            title="추가 질문 기록이 없습니다."
-            description="현재 사건은 별도 보완 질문 없이 문서 흐름이 진행되고 있습니다."
+            title="추가 정보 요청이 없습니다."
+            description="현재 사건은 별도 보완 질문 없이 문서 생성 단계로 진행 중입니다."
           />
         );
-      case 'completed':
+      case 'document_generation':
         return (
-          <div className="rounded-3xl bg-slate-50 p-5">
-            <p className="text-sm leading-7 text-slate-700">
-              완료 문서 {detail.documents.filter((document) => document.status === 'completed').length}건,
-              생성 중 또는 입력 대기 문서 {detail.documents.filter((document) => document.status !== 'completed').length}
-              건입니다. 모든 문서가 완료되면 사건 상태가 자동으로 완료로 전환됩니다.
-            </p>
+          <div className="grid gap-3">
+            {detail.documents.map((document) => (
+              <div key={document.id} className="rounded-2xl bg-slate-50 px-4 py-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="font-semibold text-slate-950">{document.title}</p>
+                  <StatusBadge type="document" value={document.status} />
+                </div>
+                <p className="mt-2 text-sm leading-6 text-slate-600">{document.description}</p>
+              </div>
+            ))}
           </div>
         );
-      case 'submitted':
-        return (
-          <div className="rounded-3xl bg-slate-50 p-5">
-            <p className="text-sm leading-7 text-slate-700">{detail.legalReviewSummary}</p>
-          </div>
+      case 'review_feedback': {
+        const reviewItems = detail.documents.flatMap((document) =>
+          document.reviewHistory.map((item) => ({
+            ...item,
+            documentId: document.id,
+            documentTitle: document.title,
+          })),
         );
+
+        return reviewItems.length > 0 ? (
+          <div className="grid gap-3">
+            {reviewItems.map((item) => (
+              <div key={item.id} className="rounded-2xl bg-slate-50 px-4 py-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="font-semibold text-slate-950">{item.title}</p>
+                  <span className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-600">
+                    {item.status === 'open' ? '피드백 대기' : '반영 완료'}
+                  </span>
+                </div>
+                <p className="mt-2 text-sm leading-6 text-slate-600">{item.description}</p>
+                <p className="mt-3 text-xs font-medium uppercase tracking-[0.18em] text-slate-500">
+                  {item.documentTitle}
+                </p>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <EmptyState
+            title="검토 또는 피드백 이력이 없습니다."
+            description="문서 생성이 끝나면 검토 요청과 반영 이력이 이곳에 정리됩니다."
+          />
+        );
+      }
       default:
         return (
           <div className="rounded-3xl bg-slate-50 p-5">
@@ -134,7 +162,7 @@ export default function WorkflowPage() {
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Workflow Visualizer</p>
             <h2 className="mt-2 font-serif text-4xl font-semibold text-slate-950">{detail.title}</h2>
             <p className="mt-4 text-sm leading-7 text-slate-600">
-              사건 등록부터 법무관 제출 직전까지의 흐름을 한눈에 보여주는 발표용 시각화 화면입니다.
+              사건 등록부터 문서 검토와 피드백 반영까지의 흐름을 한눈에 보여주는 워크플로우 화면입니다.
             </p>
           </div>
           <div className="flex flex-wrap gap-3">
@@ -153,7 +181,7 @@ export default function WorkflowPage() {
 
       <PageSection
         title="전체 문서 흐름"
-        description="사건 입력, 문서 생성, 추가 질문, 문서 완성, 제출 단계가 순서대로 연결됩니다."
+        description="사건 등록, 첨부 자료, 정보 요청, 문서 생성, 검토/피드백 단계가 같은 키 기준으로 연결됩니다."
       >
         <WorkflowStepper
           steps={steps}

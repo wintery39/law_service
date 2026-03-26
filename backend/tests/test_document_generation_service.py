@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from documents import DocumentGenerationService, DocumentGenerationSettings, EvidenceCollector, InProcessRelatedArticlesClient
 from main import app, container
@@ -89,6 +91,49 @@ async def test_generate_defense_draft_document() -> None:
     assert any(warning.patch is not None for warning in response.warnings) or response.warnings == []
 
 
+def test_generate_document_endpoint_accepts_frontend_case_payload() -> None:
+    fixture = seed_related_article_fixture()
+    document_service = DocumentGenerationService(
+        evidence_collector=EvidenceCollector(
+            related_articles_client=InProcessRelatedArticlesClient(fixture.service),
+            repository=fixture.repository,
+            text_search_store=fixture.text_search_store,
+        ),
+        settings=DocumentGenerationSettings(),
+    )
+    original_service = container.document_generation_service
+    container.document_generation_service = document_service
+
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/services/documents/generate",
+                headers={
+                    "x-request-id": "req-doc-generate",
+                    "x-corpus-version": "gold-v1",
+                    "x-ingestion-run-id": "ing-doc-generate",
+                },
+                json={
+                    "title": "창고 자산 반출 의혹 조사",
+                    "caseType": "disciplinary",
+                    "occurredAt": "2026-03-19T09:00:00Z",
+                    "location": "제3보급대대 창고동",
+                    "author": "대위 홍길동",
+                    "relatedPersons": ["병장 최민수", "중사 이영호"],
+                    "summary": "정식 승인 없이 장비 상자가 외부 적재 구역으로 이동한 정황이 확인되었습니다.",
+                    "details": "창고 출입기록과 CCTV 확인 결과, 장비 상자 2개가 정식 반출 절차 없이 이동한 정황이 포착되었습니다. 관련자 진술과 재물 관리대장 사이에 차이가 있어 추가 확인이 진행 중입니다.",
+                },
+            )
+    finally:
+        container.document_generation_service = original_service
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["draft"]["doc_type"] == "disciplinary_opinion"
+    assert payload["draft"]["title"] == "징계 의견서"
+    assert payload["evidence_report"]["totals_by_type"]["form"] == 1
+
+
 def test_document_generation_stream_endpoint() -> None:
     fixture = seed_related_article_fixture()
     document_service = DocumentGenerationService(
@@ -113,11 +158,14 @@ def test_document_generation_stream_endpoint() -> None:
                     "x-ingestion-run-id": "ing-doc-stream",
                 },
                 json={
-                    "session_id": "doc-stream",
-                    "user_intent": {"doc_type": "징계 의견서"},
-                    "user_text": "병사가 상관 허가 없이 근무지를 이탈했습니다.",
-                    "as_of_date": "2024-03-01",
-                    "jurisdiction": "kr",
+                    "title": "근무지 이탈 초기 검토",
+                    "caseType": "disciplinary",
+                    "occurredAt": "2026-03-19T09:00:00Z",
+                    "location": "생활관",
+                    "author": "중위 김수현",
+                    "relatedPersons": ["병장 최민수"],
+                    "summary": "상관 허가 없이 생활관을 이탈한 정황이 접수되었습니다.",
+                    "details": "병사가 상관 허가 없이 생활관을 이탈했고 당시 근무 교대 시간이 겹쳐 복무 공백 우려가 있었다는 보고가 접수되었습니다.",
                 },
             ) as response:
                 lines = [line for line in response.iter_lines() if line]
@@ -129,3 +177,52 @@ def test_document_generation_stream_endpoint() -> None:
     assert any(line == "event: section" for line in lines)
     assert any(line == "event: complete" for line in lines)
     assert any("징계 의견서" in line for line in lines if line.startswith("data: "))
+
+
+def test_document_generation_stream_endpoint_emits_error_event() -> None:
+    class FailingStreamService:
+        async def stream(self, payload, context):
+            if False:
+                yield None
+            raise RuntimeError("forced stream failure")
+
+    original_service = container.document_generation_service
+    container.document_generation_service = FailingStreamService()
+
+    try:
+        with TestClient(app) as client:
+            with client.stream(
+                "POST",
+                "/services/documents/generate/stream",
+                json={
+                    "title": "에러 재현용 사건",
+                    "caseType": "disciplinary",
+                    "occurredAt": "2026-03-19T09:00:00Z",
+                    "location": "생활관",
+                    "author": "중위 김수현",
+                    "relatedPersons": ["병장 최민수"],
+                    "summary": "상관 허가 없이 생활관을 이탈한 정황이 접수되었습니다.",
+                    "details": "병사가 상관 허가 없이 생활관을 이탈했고 당시 근무 교대 시간이 겹쳐 복무 공백 우려가 있었다는 보고가 접수되었습니다.",
+                },
+            ) as response:
+                lines = [line for line in response.iter_lines() if line]
+    finally:
+        container.document_generation_service = original_service
+
+    assert response.status_code == 200
+    assert any(line == "event: error" for line in lines)
+    assert any("forced stream failure" in line for line in lines if line.startswith("data: "))
+
+
+def test_document_generation_websocket_returns_error_event_for_invalid_payload() -> None:
+    with TestClient(app) as client:
+        with client.websocket_connect("/services/documents/generate/ws") as websocket:
+            websocket.send_json({"session_id": "doc-websocket-invalid"})
+
+            event = websocket.receive_json()
+
+            assert event["event"] == "error"
+            assert event["data"]["error_type"] == "ValidationError"
+
+            with pytest.raises(WebSocketDisconnect):
+                websocket.receive_json()

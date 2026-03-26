@@ -2,15 +2,39 @@ import type { CaseStatus, CaseType, PriorityLevel } from './common';
 import type { DocumentRecord } from './document';
 import type { QuestionRecord } from './question';
 
+export type WorkflowStageId =
+  | 'case_registration'
+  | 'attachment_registration'
+  | 'information_request'
+  | 'document_generation'
+  | 'review_feedback';
+
+export type WorkflowStageStatus = 'pending' | 'active' | 'completed' | 'skipped';
+
+export type TimelineEventType =
+  | 'case_registered'
+  | 'attachment_registered'
+  | 'attachment_skipped'
+  | 'information_requested'
+  | 'information_received'
+  | 'document_generated'
+  | 'document_completed'
+  | 'review_requested'
+  | 'review_completed';
+
+export interface WorkflowStage {
+  id: WorkflowStageId;
+  title: string;
+  caption: string;
+  description: string;
+  detail: string;
+  status: WorkflowStageStatus;
+}
+
 export interface TimelineEvent {
   id: string;
-  type:
-    | 'case_created'
-    | 'document_generated'
-    | 'question_requested'
-    | 'question_answered'
-    | 'document_completed'
-    | 'status_updated';
+  stageId: WorkflowStageId;
+  type: TimelineEventType;
   title: string;
   description: string;
   occurredAt: string;
@@ -40,8 +64,10 @@ export interface CaseSummary {
 
 export interface CaseDetail extends CaseSummary {
   attachmentProvided: boolean;
+  attachmentSummary: string;
   legalReviewSummary: string;
   urgencyNote: string;
+  workflowStages: WorkflowStage[];
   timeline: TimelineEvent[];
   documents: DocumentRecord[];
   questions: QuestionRecord[];
@@ -57,5 +83,6 @@ export interface CaseCreatePayload {
   summary: string;
   details: string;
   attachmentProvided: boolean;
+  attachmentSummary: string;
   priority: PriorityLevel;
 }

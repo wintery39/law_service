@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from enum import StrEnum
+import re
 from typing import Any, Literal
+from uuid import uuid4
 
 from pydantic import Field, field_validator
 
 from schemas.common import CanonicalBaseModel, parse_date_value
-from schemas.related_articles import StructuredCase
+from schemas.related_articles import CaseActor, CasePlace, CaseTime, StructuredCase
 
 
 DOC_TYPE_ALIASES = {
@@ -18,6 +20,26 @@ DOC_TYPE_ALIASES = {
     "항변서 초안": "defense_draft",
     "defense_draft": "defense_draft",
 }
+CASE_TYPE_ALIASES = {
+    "criminal": "criminal",
+    "형사": "criminal",
+    "disciplinary": "disciplinary",
+    "징계": "disciplinary",
+    "other": "other",
+    "기타": "other",
+}
+CASE_TYPE_LABELS = {
+    "criminal": "형사",
+    "disciplinary": "징계",
+    "other": "기타",
+}
+AUTO_DOC_TYPE_BY_CASE_TYPE = {
+    "criminal": "fact_summary",
+    "disciplinary": "disciplinary_opinion",
+    "other": "fact_summary",
+}
+DEFENSE_HINTS = ("항변", "소명", "반박", "억울", "진술이 일치하지", "오인")
+TOKEN_RE = re.compile(r"[0-9A-Za-z가-힣]{2,}")
 
 
 class EvidenceType(StrEnum):
@@ -146,6 +168,47 @@ class DocumentGenerationRequest(CanonicalBaseModel):
     _parse_as_of = field_validator("as_of_date", mode="before")(parse_date_value)
 
 
+class CaseDocumentGenerationRequest(CanonicalBaseModel):
+    title: str
+    case_type: Literal["criminal", "disciplinary", "other"] = Field(alias="caseType")
+    occurred_at: datetime = Field(alias="occurredAt")
+    location: str
+    author: str
+    related_persons: list[str] = Field(alias="relatedPersons")
+    summary: str
+    details: str
+
+    @field_validator("case_type", mode="before")
+    @classmethod
+    def _normalize_case_type(cls, value: str) -> str:
+        key = str(value).strip()
+        if key not in CASE_TYPE_ALIASES:
+            raise ValueError("unsupported caseType")
+        return CASE_TYPE_ALIASES[key]
+
+    @field_validator("occurred_at", mode="before")
+    @classmethod
+    def _parse_occurred_at(cls, value: datetime | str) -> datetime:
+        if isinstance(value, datetime):
+            return value
+        text = str(value).strip()
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        return datetime.fromisoformat(text)
+
+    @field_validator("related_persons", mode="before")
+    @classmethod
+    def _normalize_related_persons(cls, value: list[str] | str) -> list[str]:
+        if isinstance(value, str):
+            items = value.split(",")
+        else:
+            items = value
+        normalized = [str(item).strip() for item in items if str(item).strip()]
+        if not normalized:
+            raise ValueError("relatedPersons must contain at least one person")
+        return normalized
+
+
 class DocumentGenerationResponse(CanonicalBaseModel):
     draft: DocumentDraft
     checklist_missing_info: list[str] = Field(default_factory=list)
@@ -154,5 +217,82 @@ class DocumentGenerationResponse(CanonicalBaseModel):
 
 
 class DocumentStreamEvent(CanonicalBaseModel):
-    event: Literal["start", "evidence", "plan", "section", "evaluation", "complete"]
+    event: Literal["start", "evidence", "plan", "section", "evaluation", "complete", "error"]
     data: dict[str, Any] = Field(default_factory=dict)
+
+
+def _unique_strings(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if value and value not in seen:
+            seen.add(value)
+            result.append(value)
+    return result
+
+
+def _build_case_narrative(payload: CaseDocumentGenerationRequest) -> str:
+    return "\n".join(
+        [
+            f"사건 제목: {payload.title}",
+            f"사건 유형: {CASE_TYPE_LABELS[payload.case_type]}",
+            f"발생 일시: {payload.occurred_at.isoformat()}",
+            f"발생 장소: {payload.location}",
+            f"작성자: {payload.author}",
+            f"관련자: {', '.join(payload.related_persons)}",
+            f"사건 개요: {payload.summary}",
+            f"상세 사실관계: {payload.details}",
+        ]
+    )
+
+
+def _infer_doc_type(payload: CaseDocumentGenerationRequest, narrative: str) -> str:
+    if payload.case_type == "disciplinary":
+        return "disciplinary_opinion"
+    if any(hint in narrative for hint in DEFENSE_HINTS):
+        return "defense_draft"
+    return AUTO_DOC_TYPE_BY_CASE_TYPE[payload.case_type]
+
+
+def build_document_generation_request(payload: CaseDocumentGenerationRequest) -> DocumentGenerationRequest:
+    session_id = f"doc-{uuid4().hex}"
+    narrative = _build_case_narrative(payload)
+    actor_descriptions = [f"작성자 {payload.author}", *payload.related_persons]
+    keyphrases = _unique_strings(
+        [
+            payload.title,
+            CASE_TYPE_LABELS[payload.case_type],
+            payload.location,
+            payload.author,
+            *payload.related_persons,
+            *TOKEN_RE.findall(payload.summary),
+            *TOKEN_RE.findall(payload.details),
+        ]
+    )[:20]
+    structured_case = StructuredCase(
+        session_id=session_id,
+        narrative=narrative,
+        jurisdiction="kr",
+        as_of_date=payload.occurred_at.date(),
+        actors=[CaseActor(name=None, role=None, description=description) for description in actor_descriptions],
+        actions=[],
+        objects=[],
+        time=CaseTime(mentioned_text=payload.occurred_at.isoformat(), as_of_date=payload.occurred_at.date()),
+        place=CasePlace(name=payload.location, jurisdiction="kr"),
+        intent=None,
+        damage=None,
+        relationships=[],
+        roles=["작성자", "관련자"],
+        legal_terms=[CASE_TYPE_LABELS[payload.case_type], payload.case_type],
+        keyphrases=keyphrases,
+        missing_slots=[],
+    )
+    return DocumentGenerationRequest(
+        session_id=session_id,
+        user_intent=DocumentIntent(doc_type=_infer_doc_type(payload, narrative)),
+        user_text=narrative,
+        structured_case=structured_case,
+        as_of_date=payload.occurred_at.date(),
+        jurisdiction="kr",
+        constraints=DocumentConstraints(),
+    )

@@ -47,46 +47,57 @@ class RetrievalEvalService:
         metrics_by_experiment: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
 
         for gold_case in gold_cases:
-            structured_case, structure_debug = await self.structuring_service.structure(
-                RelatedArticleRequest(
-                    session_id=f"eval-retrieval-{gold_case.case_id}",
-                    user_text=gold_case.user_text,
-                    structured_case=gold_case.structured_case,
-                    as_of_date=gold_case.as_of_date,
-                    jurisdiction=gold_case.jurisdiction,
-                ),
-                context,
-            )
-            route = self.router.classify(structured_case)
-            query_terms = build_query_terms(structured_case, route)
-            for experiment in experiments:
-                ranked_ids, debug = self._retrieve(experiment, query_terms, structured_case.jurisdiction, context, max(k_values))
-                filtered_ids, filter_debug, tags = self._post_filter(ranked_ids, gold_case, context)
-                if not query_terms:
-                    tags = unique_strings(["query_terms_empty", *tags])
-                metrics = self._calculate_metrics(filtered_ids, gold_case.gold_article_ids, k_values)
-                metrics_by_experiment[experiment]["mrr"].append(metrics["mrr"])
-                for key, value in metrics.items():
-                    metrics_by_experiment[experiment][key].append(value)
-                stage = self._infer_stage(tags)
-                case_results.append(
-                    RetrievalCaseResult(
-                        case_id=gold_case.case_id,
-                        experiment=experiment,
-                        metrics=metrics,
-                        retrieved_ids=filtered_ids[: max(k_values)],
-                        gold_ids=gold_case.gold_article_ids,
-                        failure_tags=tags,
-                        stage=stage,
-                        debug={
-                            "query_terms": query_terms,
-                            "route_labels": route.labels,
-                            "structure_debug": structure_debug,
-                            "retrieval_debug": debug,
-                            "filter_debug": filter_debug,
-                        },
-                    )
+            session_id = f"eval-retrieval-{gold_case.case_id}"
+            self.structuring_service.clear_session(session_id)
+            try:
+                structured_case, structure_debug = await self.structuring_service.structure(
+                    RelatedArticleRequest(
+                        session_id=session_id,
+                        user_text=gold_case.user_text,
+                        structured_case=gold_case.structured_case,
+                        as_of_date=gold_case.as_of_date,
+                        jurisdiction=gold_case.jurisdiction,
+                    ),
+                    context,
                 )
+                route = self.router.classify(structured_case)
+                query_terms = build_query_terms(structured_case, route)
+                for experiment in experiments:
+                    ranked_ids, debug = self._retrieve(
+                        experiment,
+                        query_terms,
+                        structured_case.jurisdiction,
+                        context,
+                        max(k_values),
+                    )
+                    filtered_ids, filter_debug, tags = self._post_filter(ranked_ids, gold_case, context)
+                    if not query_terms:
+                        tags = unique_strings(["query_terms_empty", *tags])
+                    metrics = self._calculate_metrics(filtered_ids, gold_case.gold_article_ids, k_values)
+                    metrics_by_experiment[experiment]["mrr"].append(metrics["mrr"])
+                    for key, value in metrics.items():
+                        metrics_by_experiment[experiment][key].append(value)
+                    stage = self._infer_stage(tags)
+                    case_results.append(
+                        RetrievalCaseResult(
+                            case_id=gold_case.case_id,
+                            experiment=experiment,
+                            metrics=metrics,
+                            retrieved_ids=filtered_ids[: max(k_values)],
+                            gold_ids=gold_case.gold_article_ids,
+                            failure_tags=tags,
+                            stage=stage,
+                            debug={
+                                "query_terms": query_terms,
+                                "route_labels": route.labels,
+                                "structure_debug": structure_debug,
+                                "retrieval_debug": debug,
+                                "filter_debug": filter_debug,
+                            },
+                        )
+                    )
+            finally:
+                self.structuring_service.clear_session(session_id)
 
         summaries = [
             RetrievalExperimentSummary(
@@ -273,7 +284,7 @@ class RetrievalEvalService:
         return True
 
     def _infer_stage(self, tags: list[str]) -> str:
-        if any(tag in {"query_terms_empty", "gold_missing_from_corpus"} for tag in tags):
+        if "query_terms_empty" in tags:
             return "structuring"
         if "post_filter_drop" in tags:
             return "post_filter"

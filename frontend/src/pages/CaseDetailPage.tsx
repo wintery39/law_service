@@ -88,6 +88,10 @@ export default function CaseDetailPage() {
   }
 
   const openQuestions = caseDetail.questions.filter((question) => question.status === 'open');
+  const currentStage =
+    caseDetail.workflowStages.find((stage) => stage.status === 'active') ??
+    [...caseDetail.workflowStages].reverse().find((stage) => stage.status === 'completed') ??
+    caseDetail.workflowStages[0];
 
   return (
     <div className="space-y-8">
@@ -139,9 +143,20 @@ export default function CaseDetailPage() {
                   label: '첨부자료',
                   value: caseDetail.attachmentProvided ? '제출됨' : '없음',
                 },
+                {
+                  label: '첨부자료 요약',
+                  value: caseDetail.attachmentProvided ? caseDetail.attachmentSummary : '생략됨',
+                },
                 { label: '긴급 메모', value: caseDetail.urgencyNote },
               ]}
             />
+            <div className="mt-5 rounded-3xl bg-blue-50/70 p-5">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700">현재 단계</p>
+              <p className="mt-3 text-lg font-semibold text-slate-900">
+                {currentStage.caption} {currentStage.title}
+              </p>
+              <p className="mt-2 text-sm leading-7 text-slate-700">{currentStage.detail}</p>
+            </div>
             <div className="mt-5 rounded-3xl bg-blue-50/70 p-5">
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700">법률 검토 요약</p>
               <p className="mt-3 text-sm leading-7 text-slate-700">{caseDetail.legalReviewSummary}</p>
@@ -149,7 +164,7 @@ export default function CaseDetailPage() {
           </div>
         </PageSection>
 
-        <PageSection title="최근 활동 타임라인" description="사건 생성, 질문 요청, 문서 완료 이력을 최신 순으로 보여줍니다.">
+        <PageSection title="최근 활동 타임라인" description="같은 5단계 키 기준으로 사건 등록부터 검토 이력까지 최근 활동을 보여줍니다.">
           <div className="rounded-[32px] border border-white/60 bg-slate-50/80 p-6 shadow-soft">
             <Timeline items={caseDetail.timeline} />
           </div>

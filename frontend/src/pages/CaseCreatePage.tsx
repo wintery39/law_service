@@ -15,6 +15,7 @@ interface FormErrors {
   relatedPersons?: string;
   summary?: string;
   details?: string;
+  attachmentSummary?: string;
 }
 
 const priorityOptions: Array<{ value: PriorityLevel; label: string }> = [
@@ -40,6 +41,7 @@ export default function CaseCreatePage() {
     summary: '',
     details: '',
     attachmentProvided: true,
+    attachmentSummary: '',
     priority: 'high' as PriorityLevel,
   });
 
@@ -54,6 +56,9 @@ export default function CaseCreatePage() {
     if (!form.relatedPersons.trim()) nextErrors.relatedPersons = '관련자를 한 명 이상 입력하세요.';
     if (form.summary.trim().length < 10) nextErrors.summary = '사건 개요는 10자 이상 입력하세요.';
     if (form.details.trim().length < 30) nextErrors.details = '상세 사실관계는 30자 이상 입력하세요.';
+    if (form.attachmentProvided && form.attachmentSummary.trim().length < 5) {
+      nextErrors.attachmentSummary = '첨부 자료가 있다면 5자 이상으로 요약해 주세요.';
+    }
 
     setErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
@@ -82,6 +87,7 @@ export default function CaseCreatePage() {
       summary: form.summary.trim(),
       details: form.details.trim(),
       attachmentProvided: form.attachmentProvided,
+      attachmentSummary: form.attachmentProvided ? form.attachmentSummary.trim() : '',
       priority: form.priority,
     };
 
@@ -235,12 +241,32 @@ export default function CaseCreatePage() {
                   type="checkbox"
                   checked={form.attachmentProvided}
                   onChange={(event) =>
-                    setForm((current) => ({ ...current, attachmentProvided: event.target.checked }))
+                    setForm((current) => ({
+                      ...current,
+                      attachmentProvided: event.target.checked,
+                      attachmentSummary: event.target.checked ? current.attachmentSummary : '',
+                    }))
                   }
                   className="h-4 w-4 rounded border-slate-300 text-navy-900 focus:ring-navy-700"
                 />
                 <span className="text-sm font-medium text-slate-700">첨부자료 있음</span>
               </label>
+
+              {form.attachmentProvided ? (
+                <label className="md:col-span-2">
+                  <span className="form-label">첨부 자료 요약</span>
+                  <textarea
+                    value={form.attachmentSummary}
+                    onChange={(event) =>
+                      setForm((current) => ({ ...current, attachmentSummary: event.target.value }))
+                    }
+                    rows={3}
+                    className="form-textarea"
+                    placeholder="예: CCTV 캡처 4장, 출입기록 CSV, 창고 책임관 메모 1부"
+                  />
+                  {fieldError('attachmentSummary')}
+                </label>
+              ) : null}
             </div>
 
             {submitError ? (
@@ -270,12 +296,13 @@ export default function CaseCreatePage() {
           <aside className="space-y-5">
             <div className="rounded-[32px] border border-white/60 bg-white/90 p-6 shadow-soft">
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">자동 생성 흐름</p>
-              <h3 className="mt-3 font-serif text-2xl font-semibold text-slate-950">입력 직후 준비되는 항목</h3>
+              <h3 className="mt-3 font-serif text-2xl font-semibold text-slate-950">등록 후 이어지는 5단계</h3>
               <ul className="mt-4 space-y-3 text-sm leading-6 text-slate-600">
-                <li>사건 유형에 맞는 기본 문서 패키지 생성</li>
-                <li>문서별 상태와 진행 순서 초기화</li>
-                <li>필요 시 추가 질문 생성 준비</li>
-                <li>사건 상세 화면과 워크플로우 시각화 연결</li>
+                <li>1단계: 새 사건 등록과 기본 사실관계 입력</li>
+                <li>2단계: 첨부 자료 등록 또는 생략 처리</li>
+                <li>3단계: LLM 추가 정보 요청 여부 확인</li>
+                <li>4단계: 사건 유형에 맞는 문서 패키지 생성</li>
+                <li>5단계: 문서 검토와 사용자 피드백 반영</li>
               </ul>
             </div>
 
