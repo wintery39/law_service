@@ -4,6 +4,7 @@ from schemas.api import (
     IngestLawRequest,
     IngestLawResponse,
     LawAggregateResponse,
+    MockDataIngestionResponse,
     TextSearchResponse,
     VersionSelectionResponse,
 )
@@ -87,6 +88,7 @@ __all__ = [
     "IngestLawResponse",
     "Law",
     "LawAggregateResponse",
+    "MockDataIngestionResponse",
     "ObservationContext",
     "Reference",
     "ReferenceType",

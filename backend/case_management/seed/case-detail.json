@@ -1,0 +1,124 @@
+[
+  {
+    "id": "case-002",
+    "title": "근무지 무단 이탈 관련 징계 절차",
+    "caseType": "disciplinary",
+    "status": "completed",
+    "occurredAt": "2026-03-01T09:00:00.000Z",
+    "location": "제12보병여단 본부중대",
+    "author": "소령 이지훈",
+    "relatedPersons": ["중사 정우람", "상병 문태윤"],
+    "summary": "반복된 근무지 무단 이탈 사안에 대해 징계위원회 제출용 문서 패키지가 모두 완성된 상태입니다.",
+    "details": "근무 배치표와 복무 일지를 대조한 결과, 피징계자가 지정 근무 시간 중 두 차례 무단 이탈한 사실이 확인되었습니다. 지휘관 경고 이후에도 유사 행동이 재발하여 징계의결 요구 절차가 진행되었습니다.",
+    "priority": "medium",
+    "createdAt": "2026-03-01T10:20:00.000Z",
+    "updatedAt": "2026-03-16T14:10:00.000Z",
+    "progressPercent": 100,
+    "activeQuestionCount": 0,
+    "documentCount": 4,
+    "attachmentProvided": true,
+    "attachmentSummary": "복무일지, 순찰기록, 근무 배치표, 소명기회 제출 서류가 첨부 자료로 등록되었습니다.",
+    "legalReviewSummary": "징계 사유의 반복성과 사전 경고 이력이 모두 확보되어 징계위 제출 요건이 충족되었습니다. 피징계자 소명 기회 부여와 조사기록 정리도 완료되어, 제출 직전 상태로 판단됩니다.",
+    "urgencyNote": "이번 주 징계위원회 상정 일정에 맞춰 제출 패키지를 유지하면 됩니다.",
+    "timeline": [
+      {
+        "id": "case-002-tl-01",
+        "type": "document_completed",
+        "title": "제출 패키지 최종 정리",
+        "description": "징계위원회 제출용 표지와 첨부 순서가 최종 정리되었습니다.",
+        "occurredAt": "2026-03-16T14:10:00.000Z",
+        "actor": "문서 생성 엔진",
+        "relatedDocumentId": "doc-008"
+      },
+      {
+        "id": "case-002-tl-02",
+        "type": "document_completed",
+        "title": "소명기회 통지서 발송 반영",
+        "description": "통지 완료 정보가 문서 이력에 반영되었습니다.",
+        "occurredAt": "2026-03-14T09:00:00.000Z",
+        "actor": "행정 담당관",
+        "relatedDocumentId": "doc-007"
+      },
+      {
+        "id": "case-002-tl-03",
+        "type": "status_updated",
+        "title": "사건 상태 완료 전환",
+        "description": "필수 문서 4종이 모두 완료되어 사건 상태가 완료로 전환되었습니다.",
+        "occurredAt": "2026-03-14T08:30:00.000Z",
+        "actor": "LawFlow 시스템"
+      },
+      {
+        "id": "case-002-tl-04",
+        "type": "case_created",
+        "title": "사건 등록",
+        "description": "근무지 무단 이탈 관련 징계 절차 사건이 등록되었습니다.",
+        "occurredAt": "2026-03-01T10:20:00.000Z",
+        "actor": "소령 이지훈"
+      }
+    ],
+    "documents": [],
+    "questions": []
+  },
+  {
+    "id": "case-005",
+    "title": "보안수칙 위반 관련 징계 검토",
+    "caseType": "disciplinary",
+    "status": "waiting_for_input",
+    "occurredAt": "2026-03-11T08:20:00.000Z",
+    "location": "정보보호통제실",
+    "author": "대위 서유진",
+    "relatedPersons": ["중사 김하린", "병장 유태오"],
+    "summary": "보안수칙 위반 행위에 대한 징계 수준을 검토 중이며, 재발 방지 조치와 지휘관 확인 의견을 추가로 반영해야 하는 사건입니다.",
+    "details": "업무용 저장매체 반출 승인 절차가 누락된 채 외부 장비 연결이 이루어진 사실이 감사 로그로 확인되었습니다. 행위 경위는 대체로 정리되었으며, 고의성 및 재발 방지 조치 수준을 중심으로 최종 문서 보완이 진행 중입니다.",
+    "priority": "high",
+    "createdAt": "2026-03-11T09:10:00.000Z",
+    "updatedAt": "2026-03-18T15:10:00.000Z",
+    "progressPercent": 76,
+    "activeQuestionCount": 1,
+    "documentCount": 4,
+    "attachmentProvided": true,
+    "attachmentSummary": "감사 로그, 저장매체 반출 기록, 재발 방지 조치 계획안이 첨부 자료로 등록되었습니다.",
+    "legalReviewSummary": "행위 사실과 승인 누락 경위는 대부분 확인되었고, 징계 수위 판단에 필요한 재발 방지 조치와 지휘관 확인 의견이 남아 있습니다. 해당 입력이 확보되면 징계 수준 검토표와 제출 전 최종 점검표를 함께 확정할 수 있습니다.",
+    "urgencyNote": "지휘관 결재선 보고 전에 징계 수준 검토 문구와 재발 방지 계획을 정제해야 합니다.",
+    "timeline": [
+      {
+        "id": "case-005-tl-01",
+        "type": "document_generated",
+        "title": "최종 점검표 재생성",
+        "description": "감사 로그와 재발 방지 조치 항목이 반영된 최종 점검표가 갱신되었습니다.",
+        "occurredAt": "2026-03-18T15:10:00.000Z",
+        "actor": "문서 생성 엔진",
+        "relatedDocumentId": "doc-020"
+      },
+      {
+        "id": "case-005-tl-02",
+        "type": "question_requested",
+        "title": "재발 방지 조치 관련 추가 질문 생성",
+        "description": "징계 수준 검토표 보완을 위해 교육 계획, 통제 강화 방안, 지휘관 확인 의견을 요청했습니다.",
+        "occurredAt": "2026-03-18T13:10:00.000Z",
+        "actor": "LawFlow LLM",
+        "relatedQuestionId": "question-005-001",
+        "relatedDocumentId": "doc-019"
+      },
+      {
+        "id": "case-005-tl-03",
+        "type": "document_completed",
+        "title": "경위 확인서 완료",
+        "description": "승인 누락 경위와 당시 근무 배치가 반영된 경위 확인서가 완료되었습니다.",
+        "occurredAt": "2026-03-16T10:30:00.000Z",
+        "actor": "문서 생성 엔진",
+        "relatedDocumentId": "doc-018"
+      },
+      {
+        "id": "case-005-tl-04",
+        "type": "case_created",
+        "title": "사건 등록",
+        "description": "보안수칙 위반 관련 징계 검토 사건이 등록되었습니다.",
+        "occurredAt": "2026-03-11T09:10:00.000Z",
+        "actor": "대위 서유진"
+      }
+    ],
+    "documents": [],
+    "questions": []
+  }
+]

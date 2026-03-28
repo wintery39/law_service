@@ -23,7 +23,7 @@ from storage.observability import get_logger, log_info
 
 logger = get_logger(__name__)
 TOKEN_RE = re.compile(r"[0-9A-Za-z가-힣]{2,}")
-REGULATION_NAME_HINTS = ("규정", "규율", "훈령", "예규", "지침")
+REGULATION_NAME_HINTS = ("규정", "규율", "훈령", "예규", "지침", "규칙")
 
 CASE_LIBRARY = [
     {

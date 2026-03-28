@@ -41,6 +41,14 @@ class GraphNeighborsResponse(CanonicalBaseModel):
     neighbors: list[dict[str, object]]
 
 
+class MockDataIngestionResponse(CanonicalBaseModel):
+    source_directory: str
+    loaded_files: list[str]
+    loaded_laws: list[str]
+    ingested_units: int
+    ingested_references: int
+
+
 class AsOfQuery(CanonicalBaseModel):
     as_of: date = Field(alias="date")
 

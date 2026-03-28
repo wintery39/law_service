@@ -1,0 +1,38 @@
+[
+  {
+    "id": "case-002",
+    "title": "근무지 무단 이탈 관련 징계 절차",
+    "caseType": "disciplinary",
+    "status": "completed",
+    "occurredAt": "2026-03-01T09:00:00.000Z",
+    "location": "제12보병여단 본부중대",
+    "author": "소령 이지훈",
+    "relatedPersons": ["중사 정우람", "상병 문태윤"],
+    "summary": "반복된 근무지 무단 이탈 사안에 대해 징계위원회 제출용 문서 패키지가 모두 완성된 상태입니다.",
+    "details": "근무 배치표와 복무 일지를 대조한 결과, 피징계자가 지정 근무 시간 중 두 차례 무단 이탈한 사실이 확인되었습니다. 지휘관 경고 이후에도 유사 행동이 재발하여 징계의결 요구 절차가 진행되었습니다.",
+    "priority": "medium",
+    "createdAt": "2026-03-01T10:20:00.000Z",
+    "updatedAt": "2026-03-16T14:10:00.000Z",
+    "progressPercent": 100,
+    "activeQuestionCount": 0,
+    "documentCount": 4
+  },
+  {
+    "id": "case-005",
+    "title": "보안수칙 위반 관련 징계 검토",
+    "caseType": "disciplinary",
+    "status": "waiting_for_input",
+    "occurredAt": "2026-03-11T08:20:00.000Z",
+    "location": "정보보호통제실",
+    "author": "대위 서유진",
+    "relatedPersons": ["중사 김하린", "병장 유태오"],
+    "summary": "보안수칙 위반 행위에 대한 징계 수준을 검토 중이며, 재발 방지 조치와 지휘관 확인 의견을 추가로 반영해야 하는 사건입니다.",
+    "details": "업무용 저장매체 반출 승인 절차가 누락된 채 외부 장비 연결이 이루어진 사실이 감사 로그로 확인되었습니다. 행위 경위는 대체로 정리되었으며, 고의성 및 재발 방지 조치 수준을 중심으로 최종 문서 보완이 진행 중입니다.",
+    "priority": "high",
+    "createdAt": "2026-03-11T09:10:00.000Z",
+    "updatedAt": "2026-03-18T15:10:00.000Z",
+    "progressPercent": 76,
+    "activeQuestionCount": 1,
+    "documentCount": 4
+  }
+]

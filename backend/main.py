@@ -3,16 +3,17 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from datetime import date
 import json
+from pathlib import Path
 from uuid import uuid4
 
 from case_management import (
+    CaseWorkflowService,
     CaseCreatePayload,
     CaseDetail,
     CaseSummary,
     DashboardMetrics,
     DocumentDetail,
     DocumentRecord,
-    FrontendCaseManagementService,
     LegalBasisEntry,
     QuestionAnswerPayload,
     QuestionRecord,
@@ -30,7 +31,13 @@ from documents import (
     build_document_stream_error_event,
 )
 from graph import InMemoryGraphStore
-from ingestion import CanonicalLawTransformer, IngestionService, OpenLawApiClient, OpenLawApiSettings
+from ingestion import (
+    CanonicalLawTransformer,
+    IngestionService,
+    MockDataIngestionService,
+    OpenLawApiClient,
+    OpenLawApiSettings,
+)
 from schemas import (
     CaseDocumentGenerationRequest,
     ClarifyResponse,
@@ -39,6 +46,7 @@ from schemas import (
     IngestLawRequest,
     IngestLawResponse,
     LawAggregateResponse,
+    MockDataIngestionResponse,
     ObservationContext,
     RelatedArticleRequest,
     ResultResponse,
@@ -56,7 +64,21 @@ class ServiceContainer:
         self.graph_store = InMemoryGraphStore()
         self.text_search_store = InMemoryTextSearchStore()
         self.vector_store = InMemoryVectorStore()
-        self.case_management_service = FrontendCaseManagementService()
+        self.case_management_service = CaseWorkflowService()
+        self.mock_data_ingestion_service = MockDataIngestionService(
+            repository=self.repository,
+            graph_store=self.graph_store,
+            text_search_store=self.text_search_store,
+            vector_store=self.vector_store,
+            mock_data_dir=Path(__file__).resolve().parent / "mock_data",
+        )
+        self.mock_data_report = self.mock_data_ingestion_service.ingest_directory(
+            ObservationContext(
+                request_id="bootstrap-mock-data",
+                corpus_version="mock-data",
+                ingestion_run_id="bootstrap-mock-data",
+            )
+        )
         self.api_client = OpenLawApiClient(settings=OpenLawApiSettings())
         self.transformer = CanonicalLawTransformer()
         self.ingestion_service = IngestionService(
@@ -125,7 +147,11 @@ def build_context(
 
 @app.get("/health")
 async def health() -> dict[str, object]:
-    return {"status": "ok", "entity_counts": container.repository.count_entities()}
+    return {
+        "status": "ok",
+        "entity_counts": container.repository.count_entities(),
+        "mock_data": container.mock_data_report.model_dump(mode="json"),
+    }
 
 
 @app.get("/api/cases", response_model=list[CaseSummary])
@@ -148,7 +174,10 @@ async def get_case_detail(case_id: str) -> CaseDetail:
 
 @app.post("/api/cases", response_model=CaseDetail, status_code=201)
 async def create_case(payload: CaseCreatePayload) -> CaseDetail:
-    return container.case_management_service.create_case(payload)
+    try:
+        return container.case_management_service.create_case(payload)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 @app.get("/api/cases/{case_id}/documents", response_model=list[DocumentRecord])
@@ -189,6 +218,8 @@ async def answer_question(question_id: str, payload: QuestionAnswerPayload) -> C
         return container.case_management_service.submit_question_answer(question_id, payload.answer)
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 @app.get("/api/legal-basis", response_model=list[LegalBasisEntry])
@@ -217,6 +248,17 @@ async def ingest_law(
         ingested_units=len(bundle.units),
         ingested_references=len(bundle.references),
     )
+
+
+@app.get("/ingestions/mock-data/status", response_model=MockDataIngestionResponse)
+async def get_mock_data_status() -> MockDataIngestionResponse:
+    return container.mock_data_report
+
+
+@app.post("/ingestions/mock-data/load", response_model=MockDataIngestionResponse)
+async def load_mock_data(context: ObservationContext = Depends(build_context)) -> MockDataIngestionResponse:
+    container.mock_data_report = container.mock_data_ingestion_service.ingest_directory(context)
+    return container.mock_data_report
 
 
 @app.get("/laws/{official_law_id}", response_model=LawAggregateResponse)

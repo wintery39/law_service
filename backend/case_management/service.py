@@ -7,6 +7,7 @@ from pathlib import Path
 from threading import RLock
 from uuid import uuid4
 
+from case_management.legal_basis import DisciplinaryLegalBasisCatalog
 from case_management.schemas import (
     CaseCreatePayload,
     CaseDetail,
@@ -94,10 +95,11 @@ def _parse_iso_datetime(value: str) -> datetime:
     return datetime.fromisoformat(text)
 
 
-class FrontendCaseManagementService:
+class CaseWorkflowService:
     def __init__(self, root_dir: Path | None = None) -> None:
         self.root_dir = root_dir or Path(__file__).resolve().parents[2]
-        self.mock_dir = self.root_dir / "frontend" / "src" / "mocks"
+        self.seed_dir = self.root_dir / "backend" / "case_management" / "seed"
+        self.legal_basis_catalog = DisciplinaryLegalBasisCatalog(root_dir=self.root_dir)
         self._lock = RLock()
         self._seed_database = self._load_seed_database()
         self.reset()
@@ -130,6 +132,9 @@ class FrontendCaseManagementService:
 
     def create_case(self, payload: CaseCreatePayload) -> CaseDetail:
         with self._lock:
+            if payload.caseType != "disciplinary":
+                raise ValueError("현재 backend 1차 범위는 disciplinary 사건만 지원합니다.")
+
             now = _utcnow_iso()
             case_id = f"case-{uuid4().hex[:8]}"
             documents = self._build_document_templates(payload, case_id, now)
@@ -204,7 +209,10 @@ class FrontendCaseManagementService:
     def get_documents_by_case_id(self, case_id: str) -> list[DocumentRecord]:
         with self._lock:
             self._ensure_case(case_id)
-            return deepcopy(self._get_documents_for_case(case_id))
+            documents = [deepcopy(item) for item in self._get_documents_for_case(case_id)]
+            for document in documents:
+                document.legalBasisIds = self.legal_basis_catalog.resolve_ids_for_document(document)
+            return documents
 
     def get_document_by_id(self, case_id: str, document_id: str) -> DocumentDetail:
         with self._lock:
@@ -213,13 +221,12 @@ class FrontendCaseManagementService:
             if document is None:
                 raise KeyError("문서 정보를 찾을 수 없습니다.")
             index = next(index for index, item in enumerate(documents) if item.id == document_id)
+            legal_basis_ids = self.legal_basis_catalog.resolve_ids_for_document(document)
+            document_payload = document.model_dump()
+            document_payload["legalBasisIds"] = legal_basis_ids
             return DocumentDetail(
-                **document.model_dump(),
-                legalBasis=[
-                    deepcopy(item)
-                    for item in self._database["legalBasis"]
-                    if item.id in document.legalBasisIds
-                ],
+                **document_payload,
+                legalBasis=self.legal_basis_catalog.list_entries(legal_basis_ids, document=document),
                 questions=[
                     deepcopy(item)
                     for item in self._get_questions_for_case(case_id)
@@ -244,6 +251,8 @@ class FrontendCaseManagementService:
             question = next((item for item in self._database["questions"] if item.id == question_id), None)
             if question is None:
                 raise KeyError("질문 정보를 찾을 수 없습니다.")
+            if question.status == "answered":
+                raise ValueError("이미 답변이 제출된 질문입니다.")
 
             now = _utcnow_iso()
             question.status = "answered"
@@ -253,6 +262,7 @@ class FrontendCaseManagementService:
             document = next((item for item in self._database["documents"] if item.id == question.documentId), None)
             if document is not None:
                 document.status = "generating" if document.status == "needs_input" else document.status
+                document.content = self._apply_question_answer_to_document(document.content, answer)
                 document.updatedAt = now
                 document.versionHistory.insert(
                     0,
@@ -273,6 +283,30 @@ class FrontendCaseManagementService:
                     ),
                 )
 
+                for review in document.reviewHistory[1:]:
+                    if review.status == "open":
+                        review.status = "resolved"
+
+                next_document = next(
+                    (
+                        item
+                        for item in self._database["documents"]
+                        if item.caseId == question.caseId and item.order == document.order + 1
+                    ),
+                    None,
+                )
+                if next_document is not None and next_document.status == "pending":
+                    next_document.status = "generating"
+                    next_document.updatedAt = now
+                    next_document.versionHistory.insert(
+                        0,
+                        DocumentVersion(
+                            version=f"v{len(next_document.versionHistory) + 1}.0",
+                            updatedAt=now,
+                            note="선행 문서 보완 내용이 반영되어 검토 단계가 시작되었습니다.",
+                        ),
+                    )
+
             self._append_timeline_event(
                 question.caseId,
                 SeedTimelineEvent(
@@ -292,22 +326,21 @@ class FrontendCaseManagementService:
 
     def get_legal_basis_by_ids(self, ids: list[str]) -> list[LegalBasisEntry]:
         with self._lock:
-            return [deepcopy(item) for item in self._database["legalBasis"] if item.id in ids]
+            return self.legal_basis_catalog.list_entries(ids)
 
     def _load_seed_database(self) -> dict[str, list[object]]:
-        if not self.mock_dir.exists():
-            raise RuntimeError(f"frontend mock directory not found: {self.mock_dir}")
+        if not self.seed_dir.exists():
+            raise RuntimeError(f"case management seed directory not found: {self.seed_dir}")
 
         return {
             "cases": self._load_json("cases.json", CaseSummary),
             "caseDetails": self._load_json("case-detail.json", SeedCaseDetail),
             "documents": self._load_json("documents.json", DocumentRecord),
             "questions": self._load_json("questions.json", QuestionRecord),
-            "legalBasis": self._load_json("legal-basis.json", LegalBasisEntry),
         }
 
     def _load_json(self, filename: str, model_cls):
-        path = self.mock_dir / filename
+        path = self.seed_dir / filename
         raw_items = json.loads(path.read_text(encoding="utf-8"))
         return [model_cls.model_validate(item) for item in raw_items]
 
@@ -533,6 +566,8 @@ class FrontendCaseManagementService:
     def _hydrate_case_detail(self, case_id: str) -> CaseDetail:
         summary, detail = self._ensure_case(case_id)
         documents = [deepcopy(item) for item in self._get_documents_for_case(case_id)]
+        for document in documents:
+            document.legalBasisIds = self.legal_basis_catalog.resolve_ids_for_document(document)
         questions = [deepcopy(item) for item in self._get_questions_for_case(case_id)]
 
         hydrated = CaseDetail(
@@ -553,150 +588,79 @@ class FrontendCaseManagementService:
         _, detail = self._ensure_case(case_id)
         detail.timeline.insert(0, event)
 
+    def _apply_question_answer_to_document(self, content: str, answer: str) -> str:
+        normalized = answer.strip()
+        if not normalized:
+            return content
+        return f"{content}\n\n4. 추가 반영 사항\n{normalized}"
+
     def _build_document_templates(
         self,
         payload: CaseCreatePayload,
         case_id: str,
         created_at: str,
     ) -> list[DocumentRecord]:
-        shared_templates: dict[str, list[dict[str, object]]] = {
-            "criminal": [
-                {
-                    "title": "사건 접수 보고서",
-                    "type": "intake_report",
-                    "order": 1,
-                    "status": "completed",
-                    "description": "사건 등록 직후 접수 경위와 초동 조치를 정리하는 보고서입니다.",
-                    "content": (
-                        f"1. 접수 배경\n{payload.title} 사건이 등록되었으며, 작성자 {payload.author}가 초동 사실관계를 입력했습니다.\n\n"
-                        f"2. 주요 사실\n{payload.summary}\n\n"
-                        "3. 후속 계획\n상세 사실관계와 관련자 정보를 바탕으로 진술서 및 경위서를 단계적으로 생성합니다."
-                    ),
-                    "legalBasisIds": ["lb-002", "lb-007"],
-                },
-                {
-                    "title": "사건경위서",
-                    "type": "incident_report",
-                    "order": 2,
-                    "status": "generating",
-                    "description": "현재 입력된 사실관계를 시간순으로 정리하는 사건경위서입니다.",
-                    "content": (
-                        f"1. 사건 개요\n{payload.details}\n\n"
-                        f"2. 위치 및 관련자\n발생 장소는 {payload.location}이며, 관련자는 {', '.join(payload.relatedPersons)}입니다.\n\n"
-                        "3. 현재 상태\n초기 문서 구조가 생성되었고, 추가 확인이 필요한 항목은 후속 질문으로 연결될 수 있습니다."
-                    ),
-                    "legalBasisIds": ["lb-002"],
-                },
-                {
-                    "title": "법률 검토 메모",
-                    "type": "legal_memo",
-                    "order": 3,
-                    "status": "pending",
-                    "description": "기초 문서가 정리된 후 적용 법 조항과 검토 포인트를 요약하는 문서입니다.",
-                    "content": (
-                        "1. 검토 목적\n기초 문서 완성 이후 적용 조항과 추가 조사 필요성을 정리합니다.\n\n"
-                        "2. 현재 상태\n세부 문서 생성 완료 전까지는 틀만 유지합니다."
-                    ),
-                    "legalBasisIds": ["lb-002"],
-                },
-            ],
-            "disciplinary": [
-                {
-                    "title": "조사보고서",
-                    "type": "investigation_report",
-                    "order": 1,
-                    "status": "completed",
-                    "description": "징계 검토를 위한 사실관계 조사보고서입니다.",
-                    "content": (
-                        f"1. 사건 개요\n{payload.summary}\n\n"
-                        "2. 조사 방향\n행위 사실, 반복성, 부대 영향도를 중심으로 검토합니다.\n\n"
-                        f"3. 참고\n작성자 {payload.author}가 입력한 사실관계를 기준으로 초안이 생성되었습니다."
-                    ),
-                    "legalBasisIds": ["lb-003"],
-                },
-                {
-                    "title": "징계 수준 검토표",
-                    "type": "sanction_matrix",
-                    "order": 2,
-                    "status": "generating",
-                    "description": "징계 수위 판단 요소를 정리하는 검토표입니다.",
-                    "content": (
-                        f"1. 평가 요소\n우선순위는 {payload.priority}이며, 사건 상세 사실관계를 기준으로 고의성과 영향도를 평가합니다.\n\n"
-                        "2. 현재 상태\n보완 자료 수집 전 단계로, 평가 문구는 생성 중입니다."
-                    ),
-                    "legalBasisIds": ["lb-003", "lb-005"],
-                },
-                {
-                    "title": "제출 전 최종 점검표",
-                    "type": "final_checklist",
-                    "order": 3,
-                    "status": "pending",
-                    "description": "문서 패키지 제출 전 누락 항목을 확인하는 체크리스트입니다.",
-                    "content": (
-                        "1. 점검 범위\n조사보고서, 검토표, 증빙자료 첨부 여부를 확인합니다.\n\n"
-                        "2. 현재 상태\n문서 생성 흐름 초기 단계입니다."
-                    ),
-                    "legalBasisIds": ["lb-004"],
-                },
-            ],
-            "other": [
-                {
-                    "title": "사실관계 확인 메모",
-                    "type": "fact_memo",
-                    "order": 1,
-                    "status": "generating",
-                    "description": "사실확인 중심의 초기 메모입니다.",
-                    "content": (
-                        f"1. 사건 배경\n{payload.summary}\n\n"
-                        f"2. 상세 기록\n{payload.details}\n\n"
-                        "3. 후속 조치\n관계부서 확인 후 통보 문안을 확정합니다."
-                    ),
-                    "legalBasisIds": ["lb-008"],
-                },
-                {
-                    "title": "관계부서 통보서",
-                    "type": "department_notice",
-                    "order": 2,
-                    "status": "pending",
-                    "description": "관련 부서에 자료 회신을 요청하는 통보서입니다.",
-                    "content": "1. 통보 목적\n확인 결과 회신 요청\n\n2. 현재 상태\n초안 생성 대기 중",
-                    "legalBasisIds": ["lb-008"],
-                },
-                {
-                    "title": "초동조치 체크리스트",
-                    "type": "checklist",
-                    "order": 3,
-                    "status": "pending",
-                    "description": "필수 확인 항목을 정리하는 체크리스트입니다.",
-                    "content": "1. 점검 항목\n접수, 전달, 회신, 일정\n\n2. 현재 상태\n초안 생성 대기 중",
-                    "legalBasisIds": ["lb-008"],
-                },
-            ],
-        }
+        templates: list[dict[str, object]] = [
+            {
+                "title": "조사보고서",
+                "type": "investigation_report",
+                "order": 1,
+                "status": "completed",
+                "description": "징계 검토를 위한 사실관계 조사보고서입니다.",
+                "content": (
+                    f"1. 사건 개요\n{payload.summary}\n\n"
+                    "2. 조사 방향\n행위 사실, 반복성, 부대 영향도를 중심으로 검토합니다.\n\n"
+                    f"3. 참고\n작성자 {payload.author}가 입력한 사실관계를 기준으로 초안이 생성되었습니다."
+                ),
+            },
+            {
+                "title": "징계 수준 검토표",
+                "type": "sanction_matrix",
+                "order": 2,
+                "status": "generating",
+                "description": "징계 수위 판단 요소를 정리하는 검토표입니다.",
+                "content": (
+                    f"1. 평가 요소\n우선순위는 {payload.priority}이며, 사건 상세 사실관계를 기준으로 고의성과 영향도를 평가합니다.\n\n"
+                    "2. 현재 상태\n보완 자료 수집 전 단계로, 평가 문구는 생성 중입니다."
+                ),
+            },
+            {
+                "title": "제출 전 최종 점검표",
+                "type": "final_checklist",
+                "order": 3,
+                "status": "pending",
+                "description": "문서 패키지 제출 전 누락 항목을 확인하는 체크리스트입니다.",
+                "content": (
+                    "1. 점검 범위\n조사보고서, 검토표, 증빙자료 첨부 여부를 확인합니다.\n\n"
+                    "2. 현재 상태\n문서 생성 흐름 초기 단계입니다."
+                ),
+            },
+        ]
 
-        templates = shared_templates[payload.caseType]
         results: list[DocumentRecord] = []
         for index, template in enumerate(templates, start=1):
+            draft_document = DocumentRecord(
+                id=f"{case_id}-doc-{index}",
+                caseId=case_id,
+                title=str(template["title"]),
+                type=str(template["type"]),
+                order=int(template["order"]),
+                status=str(template["status"]),
+                description=str(template["description"]),
+                content=str(template["content"]),
+                legalBasisIds=[],
+                versionHistory=[
+                    DocumentVersion(
+                        version="v0.1",
+                        updatedAt=created_at,
+                        note="사건 등록 직후 기본 초안 생성",
+                    )
+                ],
+                reviewHistory=[],
+                updatedAt=created_at,
+            )
+            draft_document.legalBasisIds = self.legal_basis_catalog.resolve_ids_for_document(draft_document)
             results.append(
-                DocumentRecord(
-                    id=f"{case_id}-doc-{index}",
-                    caseId=case_id,
-                    title=str(template["title"]),
-                    type=str(template["type"]),
-                    order=int(template["order"]),
-                    status=str(template["status"]),
-                    description=str(template["description"]),
-                    content=str(template["content"]),
-                    legalBasisIds=list(template["legalBasisIds"]),
-                    versionHistory=[
-                        DocumentVersion(
-                            version="v0.1",
-                            updatedAt=created_at,
-                            note="사건 등록 직후 기본 초안 생성",
-                        )
-                    ],
-                    reviewHistory=[],
-                    updatedAt=created_at,
-                )
+                draft_document
             )
         return results

@@ -15,8 +15,11 @@ def build_query_terms(structured_case: StructuredCase, route: DomainRoute) -> li
     terms = [
         *structured_case.legal_terms,
         *structured_case.keyphrases,
+        *(actor.role for actor in structured_case.actors if actor.role),
+        *(actor.description for actor in structured_case.actors if actor.description),
         *(action.verb for action in structured_case.actions),
         *(obj.name for obj in structured_case.objects),
+        *((structured_case.place.name,) if structured_case.place and structured_case.place.name else ()),
     ]
     seen: set[str] = set()
     result: list[str] = []

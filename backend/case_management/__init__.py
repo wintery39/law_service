@@ -9,16 +9,16 @@ from case_management.schemas import (
     QuestionAnswerPayload,
     QuestionRecord,
 )
-from case_management.service import FrontendCaseManagementService
+from case_management.service import CaseWorkflowService
 
 __all__ = [
+    "CaseWorkflowService",
     "CaseCreatePayload",
     "CaseDetail",
     "CaseSummary",
     "DashboardMetrics",
     "DocumentDetail",
     "DocumentRecord",
-    "FrontendCaseManagementService",
     "LegalBasisEntry",
     "QuestionAnswerPayload",
     "QuestionRecord",
