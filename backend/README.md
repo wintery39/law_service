@@ -28,6 +28,8 @@
 - 저장소는 기본적으로 in-memory 입니다. 서버를 재시작하면 적재한 코퍼스가 사라집니다.
 - 단, 서버 시작 시 `mock_data/*.json`은 다시 자동 적재됩니다.
 - 실제 OPEN API 수집에는 `LAW_API_OC` 값이 필요합니다.
+- `GEMINI_API_KEY`가 설정되면 `/services/documents/generate*`는 Gemini API를 사용해 실제 초안 본문을 생성합니다.
+- `GEMINI_API_KEY`가 없으면 문서 생성은 기존 heuristic fallback으로 동작합니다.
 - `/services/related-articles/find`는 경우에 따라 바로 결과를 주지 않고 `clarify` 응답을 반환합니다.
 - 문서 생성 스트림은 정상 이벤트 외에 `error` 이벤트를 보낼 수 있습니다.
 - `/api/cases*` 계열은 현재 `disciplinary` 사건 유형만 1차 지원합니다.
@@ -49,7 +51,11 @@ uv sync --python 3.13
 uv run uvicorn main:app --reload
 ```
 
-`.env`에서 `LAW_API_OC`를 읽습니다. 실제 국가법령정보 OPEN API를 호출하려면 값을 채우세요.
+`.env`에서 `LAW_API_OC`와 Gemini 관련 설정을 읽습니다.
+
+- 실제 국가법령정보 OPEN API를 호출하려면 `LAW_API_OC`를 채우세요.
+- Gemini 기반 문서 생성을 사용하려면 `GEMINI_API_KEY`를 채우세요.
+- 기본 Gemini 모델은 `GEMINI_MODEL_NAME=gemini-2.5-flash` 입니다.
 
 루트에서 바로 실행하려면:
 
@@ -193,6 +199,8 @@ POST /services/documents/generate
 - `details`
 
 서버는 이 입력만으로 내부 `structured_case`와 문서 타입을 자동 파생합니다.
+
+`GEMINI_API_KEY`가 설정된 환경에서는 evidence/planning 단계 이후 본문 생성이 Gemini structured output으로 수행됩니다. 인용 ID, evidence report, warning 평가는 계속 backend가 책임집니다.
 
 ### 8. Stream Document Generation
 

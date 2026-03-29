@@ -27,6 +27,8 @@ from documents import (
     DocumentGenerationService,
     DocumentGenerationSettings,
     EvidenceCollector,
+    GeminiDocumentGenerator,
+    GeminiGenerationSettings,
     InProcessRelatedArticlesClient,
     build_document_stream_error_event,
 )
@@ -102,8 +104,15 @@ class ServiceContainer:
                 repository=self.repository,
                 text_search_store=self.text_search_store,
             ),
+            gemini_generator=GeminiDocumentGenerator(settings=GeminiGenerationSettings()),
             settings=DocumentGenerationSettings(),
         )
+
+    async def aclose(self) -> None:
+        await self.api_client.aclose()
+        closer = getattr(self.document_generation_service, "aclose", None)
+        if closer is not None:
+            await closer()
 
 
 container = ServiceContainer()
@@ -112,7 +121,7 @@ container = ServiceContainer()
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     yield
-    await container.api_client.aclose()
+    await container.aclose()
 
 
 app = FastAPI(title="Law Corpus Backend", version="0.1.0", lifespan=lifespan)
