@@ -31,8 +31,10 @@ export function CaseCard({ item }: { item: CaseSummary }) {
           <p className="mt-1">{formatDate(item.updatedAt)}</p>
         </div>
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">추가 질문</p>
-          <p className="mt-1">{item.activeQuestionCount}건</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">대기 항목</p>
+          <p className="mt-1">
+            질문 {item.activeQuestionCount}건 / 피드백 {item.openReviewCount}건
+          </p>
         </div>
       </div>
       <div className="mt-4">

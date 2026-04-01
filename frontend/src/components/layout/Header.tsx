@@ -12,12 +12,9 @@ export function Header() {
         <div className="flex items-center justify-between gap-4">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-500">
-              Military Legal Workflow
+              Military Disciplinary Workflow
             </p>
             <h1 className="font-serif text-2xl font-semibold text-slate-950">LawFlow</h1>
-          </div>
-          <div className="rounded-full border border-blue-100 bg-blue-50 px-4 py-2 text-xs font-semibold text-blue-700">
-            문서 흐름 데모 환경
           </div>
         </div>
         <nav className="flex flex-wrap items-center gap-2">

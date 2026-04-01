@@ -5,6 +5,7 @@ import { useToast } from '../context/ToastContext';
 import { caseService } from '../services/caseService';
 import type { CaseCreatePayload } from '../types/case';
 import type { CaseType, PriorityLevel } from '../types/common';
+import { DISCIPLINARY_DOCUMENT_CATALOG } from '../utils/documentCatalog';
 
 interface FormErrors {
   title?: string;
@@ -33,7 +34,7 @@ export default function CaseCreatePage() {
   const [errors, setErrors] = useState<FormErrors>({});
   const [form, setForm] = useState({
     title: '',
-    caseType: 'criminal' as CaseType,
+    caseType: 'disciplinary' as CaseType,
     occurredAt: '2026-03-19T09:00',
     location: '',
     author: '',
@@ -96,7 +97,7 @@ export default function CaseCreatePage() {
       showToast({
         tone: 'success',
         title: '사건이 등록되었습니다.',
-        description: '기본 문서 패키지가 생성되어 상세 화면으로 이동합니다.',
+        description: '필수 4종 문서 패키지가 생성되어 상세 화면으로 이동합니다.',
       });
       navigate(`/cases/${createdCase.id}`);
     } catch (error) {
@@ -114,7 +115,7 @@ export default function CaseCreatePage() {
     <div className="space-y-8">
       <PageSection
         title="새 사건 등록"
-        description="기본 사실관계를 입력하면 LawFlow가 사건 유형에 맞는 문서 흐름을 생성합니다."
+        description="기본 사실관계를 입력하면 징계 문서 4종 패키지가 생성됩니다."
       >
         <div className="grid gap-6 xl:grid-cols-[1.45fr_0.8fr]">
           <form
@@ -128,7 +129,7 @@ export default function CaseCreatePage() {
                   value={form.title}
                   onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))}
                   className="form-input"
-                  placeholder="예: 창고 자산 반출 의혹 조사"
+                  placeholder="예: 보안수칙 위반 관련 징계 검토"
                 />
                 {fieldError('title')}
               </label>
@@ -137,14 +138,11 @@ export default function CaseCreatePage() {
                 <span className="form-label">사건 유형</span>
                 <select
                   value={form.caseType}
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, caseType: event.target.value as CaseType }))
-                  }
+                  onChange={() => undefined}
                   className="form-input"
+                  disabled
                 >
-                  <option value="criminal">형사</option>
                   <option value="disciplinary">징계</option>
-                  <option value="other">기타</option>
                 </select>
                 {fieldError('caseType')}
               </label>
@@ -183,7 +181,7 @@ export default function CaseCreatePage() {
                   value={form.location}
                   onChange={(event) => setForm((current) => ({ ...current, location: event.target.value }))}
                   className="form-input"
-                  placeholder="예: 제3보급대대 창고동"
+                  placeholder="예: 정보보호통제실"
                 />
                 {fieldError('location')}
               </label>
@@ -262,7 +260,7 @@ export default function CaseCreatePage() {
                     }
                     rows={3}
                     className="form-textarea"
-                    placeholder="예: CCTV 캡처 4장, 출입기록 CSV, 창고 책임관 메모 1부"
+                    placeholder="예: 감사 로그 캡처, 승인 기록, 지휘관 메모, 재발 방지 계획안"
                   />
                   {fieldError('attachmentSummary')}
                 </label>
@@ -286,7 +284,7 @@ export default function CaseCreatePage() {
               <button
                 type="submit"
                 disabled={isSubmitting}
-                className="rounded-full bg-navy-900 px-5 py-3 text-sm font-semibold text-white transition hover:bg-navy-800 disabled:cursor-not-allowed disabled:bg-slate-400"
+                className="rounded-full bg-navy-900 px-5 py-3 text-sm font-semibold text-white transition hover:bg-navy-800 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-600"
               >
                 {isSubmitting ? '등록 중...' : '사건 등록 후 상세 보기'}
               </button>
@@ -295,22 +293,24 @@ export default function CaseCreatePage() {
 
           <aside className="space-y-5">
             <div className="rounded-[32px] border border-white/60 bg-white/90 p-6 shadow-soft">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">자동 생성 흐름</p>
-              <h3 className="mt-3 font-serif text-2xl font-semibold text-slate-950">등록 후 이어지는 5단계</h3>
-              <ul className="mt-4 space-y-3 text-sm leading-6 text-slate-600">
-                <li>1단계: 새 사건 등록과 기본 사실관계 입력</li>
-                <li>2단계: 첨부 자료 등록 또는 생략 처리</li>
-                <li>3단계: LLM 추가 정보 요청 여부 확인</li>
-                <li>4단계: 사건 유형에 맞는 문서 패키지 생성</li>
-                <li>5단계: 문서 검토와 사용자 피드백 반영</li>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">생성 예정 문서</p>
+              <ul className="mt-4 space-y-3 text-sm leading-6 text-slate-700">
+                {DISCIPLINARY_DOCUMENT_CATALOG.map((item) => (
+                  <li key={item.type}>
+                    <span className="font-semibold text-slate-950">
+                      {item.order}. {item.title}
+                    </span>
+                    <span className="ml-2 text-slate-500">{item.label}</span>
+                  </li>
+                ))}
               </ul>
             </div>
 
             <div className="rounded-[32px] border border-navy-100 bg-gradient-to-br from-blue-50 via-white to-slate-50 p-6 shadow-soft">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700">작성 팁</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700">입력 안내</p>
               <div className="mt-4 space-y-3 text-sm leading-6 text-slate-700">
-                <p>사건 개요는 발표자가 한 문장으로 설명할 수 있게 핵심만 정리하는 편이 좋습니다.</p>
-                <p>상세 사실관계에는 시간 순서와 확인된 자료를 포함하면 문서 초안 품질이 안정적으로 올라갑니다.</p>
+                <p>사건 개요에는 핵심 쟁점과 현재까지 확인된 사실을 간결하게 정리해 주세요.</p>
+                <p>상세 사실관계에는 시간 순서와 확인된 자료를 포함하면 문서 초안 품질이 좋아집니다.</p>
                 <p>관련자는 쉼표 기준으로 입력하면 상세 화면의 정보 카드에 그대로 표시됩니다.</p>
               </div>
             </div>

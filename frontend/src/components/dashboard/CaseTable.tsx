@@ -41,6 +41,9 @@ export function CaseTable({ cases }: { cases: CaseSummary[] }) {
                     {item.activeQuestionCount > 0 ? (
                       <span className="text-xs text-amber-700">질문 {item.activeQuestionCount}건 대기</span>
                     ) : null}
+                    {item.openReviewCount > 0 ? (
+                      <span className="text-xs text-blue-700">피드백 {item.openReviewCount}건 대기</span>
+                    ) : null}
                   </div>
                 </td>
                 <td className="px-6 py-5">{formatDate(item.createdAt)}</td>

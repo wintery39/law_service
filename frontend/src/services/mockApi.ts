@@ -4,6 +4,7 @@ import rawDocuments from '../mocks/documents.json';
 import rawQuestions from '../mocks/questions.json';
 import rawLegalBasis from '../mocks/legal-basis.json';
 import { buildWorkflowStages, calculateMetrics, calculateProgressByDocuments } from '../utils/progress';
+import { DISCIPLINARY_DOCUMENT_CATALOG } from '../utils/documentCatalog';
 import type { CaseCreatePayload, CaseDetail, CaseSummary, TimelineEvent, WorkflowStageId } from '../types/case';
 import type { CaseStatus, DashboardMetrics, DocumentStatus } from '../types/common';
 import type { DocumentDetail, DocumentRecord } from '../types/document';
@@ -247,10 +248,13 @@ function syncCaseSummary(caseId: string) {
   const questions = getQuestionsForCase(caseId);
   const progressPercent = getDocumentStatusProgress(documents);
   const openQuestionCount = questions.filter((question) => question.status === 'open').length;
+  const openReviewCount = documents.flatMap((document) => document.reviewHistory).filter((item) => item.status === 'open')
+    .length;
   const now = new Date().toISOString();
 
   summary.progressPercent = progressPercent;
   summary.activeQuestionCount = openQuestionCount;
+  summary.openReviewCount = openReviewCount;
   summary.documentCount = documents.length;
   summary.status = deriveCaseStatus(progressPercent, documents, questions);
   summary.updatedAt = now;
@@ -258,6 +262,7 @@ function syncCaseSummary(caseId: string) {
   detail.status = summary.status;
   detail.progressPercent = progressPercent;
   detail.activeQuestionCount = openQuestionCount;
+  detail.openReviewCount = openReviewCount;
   detail.documentCount = documents.length;
   detail.updatedAt = now;
 }
@@ -284,111 +289,83 @@ function hydrateCaseDetail(caseId: string): CaseDetail {
   return hydratedDetail;
 }
 
+function buildDocumentDetail(caseId: string, documentId: string): DocumentDetail {
+  const document = getDocumentsForCase(caseId).find((item) => item.id === documentId);
+
+  if (!document) {
+    throw new Error('문서 정보를 찾을 수 없습니다.');
+  }
+
+  const documents = getDocumentsForCase(caseId);
+  const index = documents.findIndex((item) => item.id === documentId);
+
+  return {
+    ...document,
+    legalBasis: database.legalBasis.filter((item) => document.legalBasisIds.includes(item.id)),
+    questions: getQuestionsForCase(caseId).filter((item) => item.documentId === documentId),
+    previousDocumentId: index > 0 ? documents[index - 1].id : undefined,
+    nextDocumentId: index < documents.length - 1 ? documents[index + 1].id : undefined,
+  };
+}
+
 function buildDocumentTemplates(payload: CaseCreatePayload, caseId: string) {
   const createdAt = new Date().toISOString();
+  const templates = DISCIPLINARY_DOCUMENT_CATALOG.map((item) => {
+    switch (item.type) {
+      case 'fact_finding_report':
+        return {
+          ...item,
+          status: 'completed' as DocumentStatus,
+          description: '확인된 사실관계와 1차 조사 의견을 정리한 문서입니다.',
+          content: `1. 조사 개요\n${payload.summary}\n\n2. 확인된 사실\n${payload.details}\n\n3. 조사 의견\n작성자 ${payload.author}가 입력한 사실관계를 기준으로 사실관계 정리를 완료했고, 이후 문서는 본 보고서를 기준으로 이어집니다.`,
+          legalBasisIds: ['lb-003', 'lb-005'],
+        };
+      case 'attendance_notice':
+        return {
+          ...item,
+          status: 'completed' as DocumentStatus,
+          description: '위원회 출석 일정과 소명 기회를 안내하는 통지서입니다.',
+          content: `1. 통지 대상\n${payload.relatedPersons.join(', ')}\n\n2. 통지 내용\n${payload.title} 사건과 관련해 위원회 출석 및 의견 제출 필요 사항을 통지합니다.\n\n3. 비고\n발생 장소는 ${payload.location}이며, 첨부 자료는 ${payload.attachmentProvided ? '등록 완료' : '미등록'} 상태입니다.`,
+          legalBasisIds: ['lb-004'],
+        };
+      case 'committee_reference':
+        return {
+          ...item,
+          status: 'generating' as DocumentStatus,
+          description: '위원회가 사실관계와 쟁점을 빠르게 파악할 수 있도록 정리한 참고 자료입니다.',
+          content: `1. 핵심 사실\n${payload.summary}\n\n2. 심의 포인트\n우선순위는 ${payload.priority}이며, 사건 상세 사실관계를 바탕으로 징계 판단 요소를 정리 중입니다.\n\n3. 현재 상태\n추가 보완 없이 위원회 상정이 가능한지 검토하면서 초안을 작성 중입니다.`,
+          legalBasisIds: ['lb-003', 'lb-005'],
+        };
+      default:
+        return {
+          ...item,
+          status: 'pending' as DocumentStatus,
+          description: '위원회 의결 결과와 처분 방향을 반영하는 최종 문서입니다.',
+          content:
+            '1. 문서 목적\n위원회 의결 결과와 최종 처분 내용을 기록합니다.\n\n2. 현재 상태\n사실결과조사보고와 위원회 참고 자료가 정리된 이후 최종 문안이 확정됩니다.',
+          legalBasisIds: ['lb-003', 'lb-004', 'lb-005'],
+        };
+    }
+  });
 
-  const sharedTemplates: Record<
-    CaseCreatePayload['caseType'],
-    Array<Omit<DocumentRecord, 'id' | 'caseId' | 'updatedAt' | 'versionHistory' | 'reviewHistory'>>
-  > = {
-    criminal: [
-      {
-        title: '사건 접수 보고서',
-        type: 'intake_report',
-        order: 1,
-        status: 'completed',
-        description: '사건 등록 직후 접수 경위와 초동 조치를 정리하는 보고서입니다.',
-        content: `1. 접수 배경\n${payload.title} 사건이 등록되었으며, 작성자 ${payload.author}가 초동 사실관계를 입력했습니다.\n\n2. 주요 사실\n${payload.summary}\n\n3. 후속 계획\n상세 사실관계와 관련자 정보를 바탕으로 진술서 및 경위서를 단계적으로 생성합니다.`,
-        legalBasisIds: ['lb-002', 'lb-007'],
-      },
-      {
-        title: '사건경위서',
-        type: 'incident_report',
-        order: 2,
-        status: 'generating',
-        description: '현재 입력된 사실관계를 시간순으로 정리하는 사건경위서입니다.',
-        content: `1. 사건 개요\n${payload.details}\n\n2. 위치 및 관련자\n발생 장소는 ${payload.location}이며, 관련자는 ${payload.relatedPersons.join(', ')}입니다.\n\n3. 현재 상태\n초기 문서 구조가 생성되었고, 추가 확인이 필요한 항목은 후속 질문으로 연결될 수 있습니다.`,
-        legalBasisIds: ['lb-002'],
-      },
-      {
-        title: '법률 검토 메모',
-        type: 'legal_memo',
-        order: 3,
-        status: 'pending',
-        description: '기초 문서가 정리된 후 적용 법 조항과 검토 포인트를 요약하는 문서입니다.',
-        content: '1. 검토 목적\n기초 문서 완성 이후 적용 조항과 추가 조사 필요성을 정리합니다.\n\n2. 현재 상태\n세부 문서 생성 완료 전까지는 틀만 유지합니다.',
-        legalBasisIds: ['lb-002'],
-      },
-    ],
-    disciplinary: [
-      {
-        title: '조사보고서',
-        type: 'investigation_report',
-        order: 1,
-        status: 'completed',
-        description: '징계 검토를 위한 사실관계 조사보고서입니다.',
-        content: `1. 사건 개요\n${payload.summary}\n\n2. 조사 방향\n행위 사실, 반복성, 부대 영향도를 중심으로 검토합니다.\n\n3. 참고\n작성자 ${payload.author}가 입력한 사실관계를 기준으로 초안이 생성되었습니다.`,
-        legalBasisIds: ['lb-003'],
-      },
-      {
-        title: '징계 수준 검토표',
-        type: 'sanction_matrix',
-        order: 2,
-        status: 'generating',
-        description: '징계 수위 판단 요소를 정리하는 검토표입니다.',
-        content: `1. 평가 요소\n우선순위는 ${payload.priority}이며, 사건 상세 사실관계를 기준으로 고의성과 영향도를 평가합니다.\n\n2. 현재 상태\n보완 자료 수집 전 단계로, 평가 문구는 생성 중입니다.`,
-        legalBasisIds: ['lb-003', 'lb-005'],
-      },
-      {
-        title: '제출 전 최종 점검표',
-        type: 'final_checklist',
-        order: 3,
-        status: 'pending',
-        description: '문서 패키지 제출 전 누락 항목을 확인하는 체크리스트입니다.',
-        content: '1. 점검 범위\n조사보고서, 검토표, 증빙자료 첨부 여부를 확인합니다.\n\n2. 현재 상태\n문서 생성 흐름 초기 단계입니다.',
-        legalBasisIds: ['lb-004'],
-      },
-    ],
-    other: [
-      {
-        title: '사실관계 확인 메모',
-        type: 'fact_memo',
-        order: 1,
-        status: 'generating',
-        description: '사실확인 중심의 초기 메모입니다.',
-        content: `1. 사건 배경\n${payload.summary}\n\n2. 상세 기록\n${payload.details}\n\n3. 후속 조치\n관계부서 확인 후 통보 문안을 확정합니다.`,
-        legalBasisIds: ['lb-008'],
-      },
-      {
-        title: '관계부서 통보서',
-        type: 'department_notice',
-        order: 2,
-        status: 'pending',
-        description: '관련 부서에 자료 회신을 요청하는 통보서입니다.',
-        content: '1. 통보 목적\n확인 결과 회신 요청\n\n2. 현재 상태\n초안 생성 대기 중',
-        legalBasisIds: ['lb-008'],
-      },
-      {
-        title: '초동조치 체크리스트',
-        type: 'checklist',
-        order: 3,
-        status: 'pending',
-        description: '필수 확인 항목을 정리하는 체크리스트입니다.',
-        content: '1. 점검 항목\n접수, 전달, 회신, 일정\n\n2. 현재 상태\n초안 생성 대기 중',
-        legalBasisIds: ['lb-008'],
-      },
-    ],
-  };
-
-  return sharedTemplates[payload.caseType].map((template, index) => ({
-    ...template,
+  return templates.map((template, index) => ({
     id: `${caseId}-doc-${index + 1}`,
     caseId,
+    title: template.title,
+    type: template.type,
+    order: template.order,
+    status: template.status,
+    description: template.description,
+    content: template.content,
+    legalBasisIds: template.legalBasisIds,
     versionHistory: [
       {
-        version: 'v0.1',
+        version: template.status === 'completed' ? 'v1.0' : 'v0.1',
         updatedAt: createdAt,
-        note: '사건 등록 직후 기본 초안 생성',
+        note:
+          template.status === 'completed'
+            ? '사건 등록 직후 필수 문서 초안이 완성되었습니다.'
+            : '사건 등록 직후 기본 초안이 생성되었습니다.',
       },
     ],
     reviewHistory: [],
@@ -443,6 +420,7 @@ export const mockApi = {
         updatedAt: now,
         progressPercent,
         activeQuestionCount: 0,
+        openReviewCount: 0,
         documentCount: documents.length,
       };
 
@@ -501,6 +479,10 @@ export const mockApi = {
   },
 
   async getDocumentById(caseId: string, documentId: string): Promise<DocumentDetail> {
+    return simulate(() => buildDocumentDetail(caseId, documentId));
+  },
+
+  async submitDocumentReview(caseId: string, documentId: string, title: string, description: string) {
     return simulate(() => {
       const document = getDocumentsForCase(caseId).find((item) => item.id === documentId);
 
@@ -508,16 +490,83 @@ export const mockApi = {
         throw new Error('문서 정보를 찾을 수 없습니다.');
       }
 
-      const documents = getDocumentsForCase(caseId);
-      const index = documents.findIndex((item) => item.id === documentId);
+      const now = new Date().toISOString();
 
-      return {
-        ...document,
-        legalBasis: database.legalBasis.filter((item) => document.legalBasisIds.includes(item.id)),
-        questions: getQuestionsForCase(caseId).filter((item) => item.documentId === documentId),
-        previousDocumentId: index > 0 ? documents[index - 1].id : undefined,
-        nextDocumentId: index < documents.length - 1 ? documents[index + 1].id : undefined,
-      };
+      document.reviewHistory.unshift({
+        id: `${document.id}-review-${Date.now()}`,
+        title: title.trim(),
+        description: description.trim(),
+        createdAt: now,
+        status: 'open',
+      });
+      document.status = document.status === 'needs_input' ? 'needs_input' : 'generating';
+      document.updatedAt = now;
+
+      appendTimelineEvent(caseId, {
+        id: `${caseId}-timeline-${Date.now()}`,
+        stageId: 'review_feedback',
+        type: 'review_requested',
+        title: '문서 피드백 등록',
+        description: `${document.title} 문서에 대한 사용자 피드백이 등록되었습니다.`,
+        occurredAt: now,
+        actor: '사용자',
+        relatedDocumentId: documentId,
+      });
+
+      syncCaseSummary(caseId);
+
+      return buildDocumentDetail(caseId, documentId);
+    });
+  },
+
+  async resolveDocumentReview(caseId: string, documentId: string, reviewId: string) {
+    return simulate(() => {
+      const document = getDocumentsForCase(caseId).find((item) => item.id === documentId);
+
+      if (!document) {
+        throw new Error('문서 정보를 찾을 수 없습니다.');
+      }
+
+      const review = document.reviewHistory.find((item) => item.id === reviewId);
+
+      if (!review) {
+        throw new Error('피드백 정보를 찾을 수 없습니다.');
+      }
+
+      if (review.status === 'resolved') {
+        throw new Error('이미 반영 완료된 피드백입니다.');
+      }
+
+      const now = new Date().toISOString();
+
+      review.status = 'resolved';
+      const hasRemainingOpenReviews = document.reviewHistory.some((item) => item.id !== reviewId && item.status === 'open');
+      const hasOpenQuestions = getQuestionsForCase(caseId).some(
+        (item) => item.documentId === documentId && item.status === 'open',
+      );
+
+      document.status = hasOpenQuestions ? 'needs_input' : hasRemainingOpenReviews ? 'generating' : 'completed';
+      document.updatedAt = now;
+      document.versionHistory.unshift({
+        version: `v${document.versionHistory.length + 1}.0`,
+        updatedAt: now,
+        note: `${review.title} 피드백을 반영해 문서를 수정했습니다.`,
+      });
+
+      appendTimelineEvent(caseId, {
+        id: `${caseId}-timeline-${Date.now()}`,
+        stageId: 'review_feedback',
+        type: 'review_completed',
+        title: '문서 피드백 반영 완료',
+        description: `${document.title} 문서에 대한 사용자 피드백이 반영되었습니다.`,
+        occurredAt: now,
+        actor: '문서 생성 엔진',
+        relatedDocumentId: documentId,
+      });
+
+      syncCaseSummary(caseId);
+
+      return buildDocumentDetail(caseId, documentId);
     });
   },
 

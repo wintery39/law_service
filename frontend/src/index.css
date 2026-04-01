@@ -36,7 +36,7 @@
 
 @layer components {
   .form-label {
-    @apply mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-slate-500;
+    @apply mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-slate-600;
   }
 
   .form-input {
@@ -45,5 +45,35 @@
 
   .form-textarea {
     @apply w-full rounded-3xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm leading-6 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-navy-400 focus:bg-white focus:ring-4 focus:ring-blue-100;
+  }
+}
+
+@layer utilities {
+  .text-slate-400 {
+    color: rgb(100 116 139);
+  }
+
+  .text-slate-500 {
+    color: rgb(71 85 105);
+  }
+
+  .text-blue-700 {
+    color: rgb(30 64 175);
+  }
+
+  .text-amber-700 {
+    color: rgb(146 64 14);
+  }
+
+  .text-emerald-700 {
+    color: rgb(6 95 70);
+  }
+
+  .text-white\/70 {
+    color: rgb(241 245 249);
+  }
+
+  .text-white\/80 {
+    color: rgb(248 250 252);
   }
 }

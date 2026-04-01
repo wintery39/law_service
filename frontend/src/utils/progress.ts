@@ -60,6 +60,8 @@ export function calculateMetrics(cases: CaseSummary[]): DashboardMetrics {
 export function buildWorkflowStages(caseDetail: CaseDetail): WorkflowStage[] {
   const documentsCompleted =
     caseDetail.documents.length > 0 && caseDetail.documents.every((document) => document.status === 'completed');
+  const draftsPrepared =
+    caseDetail.documents.length > 0 && caseDetail.documents.every((document) => document.status !== 'pending');
   const openQuestions = caseDetail.questions.filter((question) => question.status === 'open');
   const answeredQuestions = caseDetail.questions.filter((question) => question.status === 'answered');
   const documentsNeedingInput = caseDetail.documents.filter((document) => document.status === 'needs_input').length;
@@ -106,26 +108,30 @@ export function buildWorkflowStages(caseDetail: CaseDetail): WorkflowStage[] {
     {
       id: 'document_generation',
       ...WORKFLOW_STAGE_META.document_generation,
-      detail: documentsCompleted
-        ? `${caseDetail.documents.length}개의 문서가 모두 생성 완료되었습니다.`
-        : `${caseDetail.documents.length}개 문서 중 ${generatingDocuments}개 작성 중, ${pendingDocuments}개 대기, ${documentsNeedingInput}개 추가 정보 필요 상태입니다.`,
-      status: documentsCompleted
+      detail: openReviews > 0 && draftsPrepared
+        ? `${caseDetail.documents.length}개 문서 초안이 준비되었고, 현재 ${openReviews}건의 피드백 반영이 진행 중입니다.`
+        : documentsCompleted
+          ? `${caseDetail.documents.length}개의 문서가 모두 생성 완료되었습니다.`
+          : `${caseDetail.documents.length}개 문서 중 ${generatingDocuments}개 작성 중, ${pendingDocuments}개 대기, ${documentsNeedingInput}개 추가 정보 필요 상태입니다.`,
+      status: openReviews > 0 && draftsPrepared
         ? 'completed'
-        : caseDetail.documents.length === 0 || openQuestions.length > 0 || documentsNeedingInput > 0
-          ? 'pending'
-          : 'active',
+        : documentsCompleted
+          ? 'completed'
+          : caseDetail.documents.length === 0 || openQuestions.length > 0 || documentsNeedingInput > 0
+            ? 'pending'
+            : 'active',
     },
     {
       id: 'review_feedback',
       ...WORKFLOW_STAGE_META.review_feedback,
-      detail: !documentsCompleted
-        ? '문서 생성이 완료되면 검토와 피드백 반영 단계로 넘어갑니다.'
-        : openReviews > 0
-          ? `${openReviews}건의 검토 요청이 열려 있으며, 사용자 피드백 반영이 필요합니다.`
+      detail: openReviews > 0
+        ? `${openReviews}건의 검토 요청이 열려 있으며, 사용자 피드백 반영이 필요합니다.`
+        : !documentsCompleted && !hasReviewHistory
+          ? '문서 생성이 완료되면 검토와 피드백 반영 단계로 넘어갑니다.'
           : hasReviewHistory
             ? `${resolvedReviews}건의 검토 이력이 정리되었고 현재 열린 피드백은 없습니다.`
             : '검토 요청 없이 문서 패키지가 마무리되었습니다.',
-      status: !documentsCompleted ? 'pending' : openReviews > 0 ? 'active' : 'completed',
+      status: openReviews > 0 ? 'active' : !documentsCompleted && !hasReviewHistory ? 'pending' : 'completed',
     },
   ];
 }

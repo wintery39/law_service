@@ -59,6 +59,7 @@ export interface CaseSummary {
   updatedAt: string;
   progressPercent: number;
   activeQuestionCount: number;
+  openReviewCount: number;
   documentCount: number;
 }
 

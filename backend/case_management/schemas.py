@@ -142,6 +142,7 @@ class CaseSummary(CanonicalBaseModel):
     updatedAt: str
     progressPercent: int
     activeQuestionCount: int
+    openReviewCount: int
     documentCount: int
 
 
@@ -213,6 +214,19 @@ class DashboardMetrics(CanonicalBaseModel):
     inProgressCases: int
     completedCases: int
     waitingCases: int
+
+
+class DocumentReviewCreatePayload(CanonicalBaseModel):
+    title: str
+    description: str
+
+    @field_validator("title", "description", mode="after")
+    @classmethod
+    def _strip_required_text(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("field must not be blank")
+        return text
 
 
 class QuestionAnswerPayload(CanonicalBaseModel):

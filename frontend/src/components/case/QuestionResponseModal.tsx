@@ -90,7 +90,7 @@ export function QuestionResponseModal({
                 type="button"
                 disabled={isSubmitting || !answer.trim()}
                 onClick={() => onSubmit(answer.trim())}
-                className="rounded-full bg-navy-900 px-5 py-2 text-sm font-semibold text-white transition hover:bg-navy-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+                className="rounded-full bg-navy-900 px-5 py-2 text-sm font-semibold text-white transition hover:bg-navy-800 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-600"
               >
                 {isSubmitting ? '제출 중...' : '답변 제출'}
               </button>

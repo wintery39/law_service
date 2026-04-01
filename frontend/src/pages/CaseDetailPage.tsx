@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import legalBasisData from '../mocks/legal-basis.json';
 import { DocumentStepCard } from '../components/case/DocumentStepCard';
 import { QuestionBox } from '../components/case/QuestionBox';
 import { QuestionResponseModal } from '../components/case/QuestionResponseModal';
@@ -14,6 +13,7 @@ import { ProgressBar } from '../components/common/ProgressBar';
 import { StatusBadge } from '../components/common/StatusBadge';
 import { useToast } from '../context/ToastContext';
 import { caseService } from '../services/caseService';
+import { legalBasisService } from '../services/legalBasisService';
 import { questionService } from '../services/questionService';
 import type { CaseDetail } from '../types/case';
 import type { AsyncStatus } from '../types/common';
@@ -21,14 +21,11 @@ import type { QuestionRecord } from '../types/question';
 import { formatDateTime } from '../utils/formatDate';
 import { getCaseTypeLabel } from '../utils/status';
 
-const legalBasisMap = new Map(
-  legalBasisData.map((item) => [item.id, `${item.lawName} ${item.article}`]),
-);
-
 export default function CaseDetailPage() {
   const { caseId = '' } = useParams();
   const { showToast } = useToast();
   const [caseDetail, setCaseDetail] = useState<CaseDetail | null>(null);
+  const [legalBasisLabels, setLegalBasisLabels] = useState<Record<string, string>>({});
   const [status, setStatus] = useState<AsyncStatus>('loading');
   const [error, setError] = useState('');
   const [selectedQuestion, setSelectedQuestion] = useState<QuestionRecord | null>(null);
@@ -40,7 +37,16 @@ export default function CaseDetailPage() {
 
     try {
       const detail = await caseService.getCaseById(caseId);
+      const legalBasisIds = [...new Set(detail.documents.flatMap((document) => document.legalBasisIds))];
+      const legalBasisEntries =
+        legalBasisIds.length > 0 ? await legalBasisService.getLegalBasisByIds(legalBasisIds) : [];
+
+      const nextLabels = Object.fromEntries(
+        legalBasisEntries.map((item) => [item.id, `${item.lawName} ${item.article}`]),
+      );
+
       setCaseDetail(detail);
+      setLegalBasisLabels(nextLabels);
       setStatus('success');
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : '사건 상세 조회에 실패했습니다.');
@@ -89,6 +95,7 @@ export default function CaseDetailPage() {
 
   const openQuestions = caseDetail.questions.filter((question) => question.status === 'open');
   const currentStage =
+    caseDetail.workflowStages.find((stage) => stage.id === 'review_feedback' && stage.status === 'active') ??
     caseDetail.workflowStages.find((stage) => stage.status === 'active') ??
     [...caseDetail.workflowStages].reverse().find((stage) => stage.status === 'completed') ??
     caseDetail.workflowStages[0];
@@ -173,7 +180,7 @@ export default function CaseDetailPage() {
 
       <PageSection
         title="문서 생성 단계"
-        description="필요 문서 목록과 상태, 법률 근거 요약, 문서 상세 진입 링크를 제공합니다."
+        description="필수 4종 문서 패키지의 상태, 법률 근거 요약, 상세 진입 링크를 제공합니다."
       >
         <div className="grid gap-4">
           {caseDetail.documents.map((document) => (
@@ -181,7 +188,7 @@ export default function CaseDetailPage() {
               key={document.id}
               caseId={caseDetail.id}
               document={document}
-              legalSummary={document.legalBasisIds.map((basisId) => legalBasisMap.get(basisId) ?? basisId)}
+              legalSummary={document.legalBasisIds.map((basisId) => legalBasisLabels[basisId] ?? basisId)}
             />
           ))}
         </div>

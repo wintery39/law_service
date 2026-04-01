@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import type { DocumentRecord } from '../../types/document';
+import { getDocumentTypeLabel } from '../../utils/documentCatalog';
 import { StatusBadge } from '../common/StatusBadge';
 
 interface DocumentStepCardProps {
@@ -19,7 +20,7 @@ export function DocumentStepCard({ caseId, document, legalSummary }: DocumentSte
             </span>
             <div>
               <h3 className="text-lg font-semibold text-slate-950">{document.title}</h3>
-              <p className="mt-1 text-sm text-slate-500">{document.type}</p>
+              <p className="mt-1 text-sm text-slate-500">{getDocumentTypeLabel(document.type)}</p>
             </div>
           </div>
           <p className="text-sm leading-6 text-slate-600">{document.description}</p>

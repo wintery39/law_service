@@ -13,6 +13,7 @@ from case_management import (
     CaseSummary,
     DashboardMetrics,
     DocumentDetail,
+    DocumentReviewCreatePayload,
     DocumentRecord,
     LegalBasisEntry,
     QuestionAnswerPayload,
@@ -66,7 +67,6 @@ class ServiceContainer:
         self.graph_store = InMemoryGraphStore()
         self.text_search_store = InMemoryTextSearchStore()
         self.vector_store = InMemoryVectorStore()
-        self.case_management_service = CaseWorkflowService()
         self.mock_data_ingestion_service = MockDataIngestionService(
             repository=self.repository,
             graph_store=self.graph_store,
@@ -106,6 +106,9 @@ class ServiceContainer:
             ),
             gemini_generator=GeminiDocumentGenerator(settings=GeminiGenerationSettings()),
             settings=DocumentGenerationSettings(),
+        )
+        self.case_management_service = CaseWorkflowService(
+            document_generation_service=self.document_generation_service,
         )
 
     async def aclose(self) -> None:
@@ -184,7 +187,7 @@ async def get_case_detail(case_id: str) -> CaseDetail:
 @app.post("/api/cases", response_model=CaseDetail, status_code=201)
 async def create_case(payload: CaseCreatePayload) -> CaseDetail:
     try:
-        return container.case_management_service.create_case(payload)
+        return await container.case_management_service.create_case(payload)
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
 
@@ -203,6 +206,38 @@ async def get_document_detail(case_id: str, document_id: str) -> DocumentDetail:
         return container.case_management_service.get_document_by_id(case_id, document_id)
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.post("/api/cases/{case_id}/documents/{document_id}/reviews", response_model=DocumentDetail)
+async def submit_document_review(
+    case_id: str,
+    document_id: str,
+    payload: DocumentReviewCreatePayload,
+) -> DocumentDetail:
+    try:
+        return container.case_management_service.submit_document_review(
+            case_id,
+            document_id,
+            payload.title,
+            payload.description,
+        )
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.post(
+    "/api/cases/{case_id}/documents/{document_id}/reviews/{review_id}/resolve",
+    response_model=DocumentDetail,
+)
+async def resolve_document_review(case_id: str, document_id: str, review_id: str) -> DocumentDetail:
+    try:
+        return container.case_management_service.resolve_document_review(case_id, document_id, review_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 @app.get("/api/cases/{case_id}/questions", response_model=list[QuestionRecord])

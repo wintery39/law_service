@@ -9,10 +9,26 @@ interface SummaryCardProps {
 }
 
 const accentMap = {
-  navy: 'from-navy-900 via-navy-800 to-blue-700 text-white',
-  slate: 'from-slate-100 via-white to-slate-50 text-slate-950',
-  emerald: 'from-emerald-600 via-emerald-500 to-teal-500 text-white',
-  amber: 'from-amber-500 via-orange-500 to-amber-400 text-white',
+  navy: {
+    container: 'border-navy-100 from-blue-50 via-white to-slate-50 text-slate-950',
+    eyebrow: 'text-navy-800',
+    description: 'text-slate-700',
+  },
+  slate: {
+    container: 'from-slate-100 via-white to-slate-50 text-slate-950',
+    eyebrow: 'text-slate-700',
+    description: 'text-slate-700',
+  },
+  emerald: {
+    container: 'from-emerald-100 via-teal-50 to-white text-emerald-950',
+    eyebrow: 'text-emerald-900',
+    description: 'text-emerald-900',
+  },
+  amber: {
+    container: 'from-amber-100 via-orange-50 to-white text-amber-950',
+    eyebrow: 'text-amber-900',
+    description: 'text-amber-950',
+  },
 };
 
 export function SummaryCard({
@@ -22,16 +38,18 @@ export function SummaryCard({
   accent = 'slate',
   extra,
 }: SummaryCardProps) {
+  const accentStyles = accentMap[accent];
+
   return (
     <article
-      className={`rounded-3xl border border-white/60 bg-gradient-to-br px-5 py-5 shadow-soft ${accentMap[accent]}`}
+      className={`rounded-3xl border bg-gradient-to-br px-5 py-5 shadow-soft ${accentStyles.container}`}
     >
-      <p className="text-xs font-semibold uppercase tracking-[0.22em] opacity-80">{title}</p>
+      <p className={`text-xs font-semibold uppercase tracking-[0.22em] ${accentStyles.eyebrow}`}>{title}</p>
       <div className="mt-4 flex items-end justify-between gap-4">
         <p className="font-serif text-4xl font-semibold leading-none">{value}</p>
         {extra}
       </div>
-      <p className="mt-4 text-sm leading-6 opacity-85">{description}</p>
+      <p className={`mt-4 text-sm leading-6 ${accentStyles.description}`}>{description}</p>
     </article>
   );
 }

@@ -27,9 +27,16 @@ export default function DocumentDetailPage() {
   const [error, setError] = useState('');
   const [selectedQuestion, setSelectedQuestion] = useState<QuestionRecord | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [feedbackTitle, setFeedbackTitle] = useState('');
+  const [feedbackDescription, setFeedbackDescription] = useState('');
+  const [feedbackError, setFeedbackError] = useState('');
+  const [submittingFeedback, setSubmittingFeedback] = useState(false);
+  const [resolvingReviewId, setResolvingReviewId] = useState('');
 
-  async function loadDocument() {
-    setStatus('loading');
+  async function loadDocument(showLoader = true) {
+    if (showLoader) {
+      setStatus('loading');
+    }
     setError('');
 
     try {
@@ -60,7 +67,7 @@ export default function DocumentDetailPage() {
 
     try {
       await questionService.submitQuestionAnswer(selectedQuestion.id, answer);
-      await loadDocument();
+      await loadDocument(false);
       setSelectedQuestion(null);
       showToast({
         tone: 'success',
@@ -78,6 +85,64 @@ export default function DocumentDetailPage() {
     }
   }
 
+  async function handleFeedbackSubmit() {
+    const trimmedTitle = feedbackTitle.trim();
+    const trimmedDescription = feedbackDescription.trim();
+
+    if (trimmedTitle.length < 2) {
+      setFeedbackError('피드백 제목을 2자 이상 입력해 주세요.');
+      return;
+    }
+
+    if (trimmedDescription.length < 10) {
+      setFeedbackError('피드백 내용은 10자 이상 입력해 주세요.');
+      return;
+    }
+
+    setFeedbackError('');
+    setSubmittingFeedback(true);
+
+    try {
+      await documentService.submitDocumentReview(caseId, documentId, trimmedTitle, trimmedDescription);
+      await loadDocument(false);
+      setFeedbackTitle('');
+      setFeedbackDescription('');
+      showToast({
+        tone: 'success',
+        title: '문서 피드백이 등록되었습니다.',
+        description: '검토 이력과 사건 상태가 갱신되었습니다.',
+      });
+    } catch (submitError) {
+      setFeedbackError(
+        submitError instanceof Error ? submitError.message : '피드백 등록 중 오류가 발생했습니다.',
+      );
+    } finally {
+      setSubmittingFeedback(false);
+    }
+  }
+
+  async function handleResolveReview(reviewId: string) {
+    setResolvingReviewId(reviewId);
+
+    try {
+      await documentService.resolveDocumentReview(caseId, documentId, reviewId);
+      await loadDocument(false);
+      showToast({
+        tone: 'success',
+        title: '피드백 반영을 완료 처리했습니다.',
+        description: '문서 버전 이력과 검토 상태가 갱신되었습니다.',
+      });
+    } catch (resolveError) {
+      showToast({
+        tone: 'error',
+        title: '피드백 반영 처리 실패',
+        description: resolveError instanceof Error ? resolveError.message : '잠시 후 다시 시도해 주세요.',
+      });
+    } finally {
+      setResolvingReviewId('');
+    }
+  }
+
   if (status === 'loading') {
     return <LoadingSpinner message="문서 본문, 법률 근거, 버전 이력을 불러오는 중입니다." />;
   }
@@ -85,8 +150,6 @@ export default function DocumentDetailPage() {
   if (status === 'error' || !caseDetail || !documentDetail) {
     return <ErrorState description={error} onRetry={() => void loadDocument()} />;
   }
-
-  const openQuestions = documentDetail.questions.filter((item) => item.status === 'open');
 
   return (
     <div className="space-y-8">
@@ -159,22 +222,91 @@ export default function DocumentDetailPage() {
           </div>
         </PageSection>
 
-        <PageSection title="수정 요청 및 질문 이력" description="문서 보완 과정에서 발생한 요청과 질문 상태를 함께 보여줍니다.">
+        <PageSection
+          title="유저 피드백 및 질문 이력"
+          description="문서 검토 피드백을 남기고, 반영 상태와 추가 질문 이력을 함께 관리합니다."
+        >
           <div className="space-y-4 rounded-[32px] border border-white/60 bg-white/95 p-6 shadow-soft">
+            <div className="rounded-3xl border border-blue-100 bg-blue-50/60 p-5">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700">유저 검토 피드백 등록</p>
+              <p className="mt-3 text-sm leading-6 text-slate-700">
+                문서 표현, 사실관계 보완, 위원회 제출용 문구 수정 요청을 바로 남길 수 있습니다.
+              </p>
+              <div className="mt-4 space-y-4">
+                <label className="block">
+                  <span className="form-label">피드백 제목</span>
+                  <input
+                    value={feedbackTitle}
+                    onChange={(event) => setFeedbackTitle(event.target.value)}
+                    className="form-input"
+                    placeholder="예: 재발 방지 계획 문구 보완"
+                  />
+                </label>
+                <label className="block">
+                  <span className="form-label">피드백 내용</span>
+                  <textarea
+                    value={feedbackDescription}
+                    onChange={(event) => setFeedbackDescription(event.target.value)}
+                    rows={4}
+                    className="form-textarea"
+                    placeholder="예: 위원회 참고 자료에 교육 일정, 책임 부서, 지휘관 확인 의견을 더 구체적으로 반영해 주세요."
+                  />
+                </label>
+                {feedbackError ? (
+                  <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                    {feedbackError}
+                  </div>
+                ) : null}
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => void handleFeedbackSubmit()}
+                    disabled={submittingFeedback}
+                    className="rounded-full bg-navy-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-navy-800 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-600"
+                  >
+                    {submittingFeedback ? '등록 중...' : '피드백 등록'}
+                  </button>
+                </div>
+              </div>
+            </div>
+
             {documentDetail.reviewHistory.length === 0 && documentDetail.questions.length === 0 ? (
               <EmptyState
                 title="기록된 보완 이력이 없습니다."
-                description="이 문서는 별도 수정 요청이나 추가 질문 없이 생성되었습니다."
+                description="이 문서는 아직 피드백이나 추가 질문 없이 유지되고 있습니다."
               />
             ) : (
               <>
                 {documentDetail.reviewHistory.map((item) => (
                   <div key={item.id} className="rounded-2xl bg-slate-50 px-4 py-4">
-                    <div className="flex items-center justify-between gap-3">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
                       <p className="font-semibold text-slate-950">{item.title}</p>
-                      <span className="text-xs text-slate-500">{formatDateTime(item.createdAt)}</span>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span
+                          className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                            item.status === 'open'
+                              ? 'bg-amber-50 text-amber-800 ring-1 ring-amber-200'
+                              : 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200'
+                          }`}
+                        >
+                          {item.status === 'open' ? '반영 대기' : '반영 완료'}
+                        </span>
+                        <span className="text-xs text-slate-500">{formatDateTime(item.createdAt)}</span>
+                      </div>
                     </div>
                     <p className="mt-2 text-sm leading-6 text-slate-600">{item.description}</p>
+                    {item.status === 'open' ? (
+                      <div className="mt-4 flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => void handleResolveReview(item.id)}
+                          disabled={resolvingReviewId === item.id}
+                          className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-white disabled:cursor-not-allowed disabled:text-slate-400"
+                        >
+                          {resolvingReviewId === item.id ? '반영 중...' : '반영 완료 처리'}
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
                 ))}
                 {documentDetail.questions.map((question) => (

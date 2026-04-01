@@ -12,7 +12,7 @@ export function ErrorState({
   return (
     <div className="rounded-3xl border border-rose-200 bg-rose-50/80 px-6 py-10 text-center shadow-soft">
       <p className="text-lg font-semibold text-rose-900">{title}</p>
-      <p className="mx-auto mt-2 max-w-2xl text-sm leading-6 text-rose-800/80">{description}</p>
+      <p className="mx-auto mt-2 max-w-2xl text-sm leading-6 text-rose-900">{description}</p>
       {onRetry ? (
         <button
           type="button"

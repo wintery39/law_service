@@ -47,7 +47,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             className={`pointer-events-auto rounded-2xl border px-4 py-3 shadow-soft backdrop-blur ${toneClassNames[toast.tone]}`}
           >
             <p className="text-sm font-semibold">{toast.title}</p>
-            {toast.description ? <p className="mt-1 text-sm opacity-80">{toast.description}</p> : null}
+            {toast.description ? <p className="mt-1 text-sm leading-6">{toast.description}</p> : null}
           </div>
         ))}
       </div>

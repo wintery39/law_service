@@ -9,9 +9,7 @@ import type {
 
 export const caseTypeOptions: SelectOption<CaseType>[] = [
   { label: '전체 유형', value: 'all' },
-  { label: '형사', value: 'criminal' },
   { label: '징계', value: 'disciplinary' },
-  { label: '기타', value: 'other' },
 ];
 
 export const caseStatusOptions: SelectOption<CaseStatus>[] = [

@@ -69,6 +69,7 @@ class DocumentConstraints(CanonicalBaseModel):
     required_sections: list[str] = Field(default_factory=list)
     prohibited_phrases: list[str] = Field(default_factory=list)
     extra_instructions: list[str] = Field(default_factory=list)
+    prompt_profile: str | None = None
     enable_plan_retrieval_loop: bool = True
 
 

@@ -13,6 +13,20 @@ export function WorkflowStepper({ steps, selectedStepId, onSelect }: WorkflowSte
         const isSelected = selectedStepId === step.id;
         const isCompleted = step.status === 'completed' || step.status === 'skipped';
         const isActive = step.status === 'active';
+        const captionClassName = isSelected
+          ? 'text-slate-100'
+          : isCompleted
+            ? 'text-emerald-900'
+            : isActive
+              ? 'text-amber-900'
+              : 'text-slate-600';
+        const descriptionClassName = isSelected
+          ? 'text-slate-50'
+          : isCompleted
+            ? 'text-emerald-900'
+            : isActive
+              ? 'text-amber-900'
+              : 'text-slate-700';
 
         return (
           <button
@@ -30,7 +44,9 @@ export function WorkflowStepper({ steps, selectedStepId, onSelect }: WorkflowSte
             }`}
           >
             <div className="flex items-center justify-between gap-3">
-              <span className="text-xs font-semibold uppercase tracking-[0.18em] opacity-70">{step.caption}</span>
+              <span className={`text-xs font-semibold uppercase tracking-[0.18em] ${captionClassName}`}>
+                {step.caption}
+              </span>
               <span
                 className={`inline-flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold ${
                   isSelected
@@ -46,7 +62,7 @@ export function WorkflowStepper({ steps, selectedStepId, onSelect }: WorkflowSte
               </span>
             </div>
             <h3 className="mt-4 text-lg font-semibold">{step.title}</h3>
-            <p className="mt-2 text-sm leading-6 opacity-85">{step.description}</p>
+            <p className={`mt-2 text-sm leading-6 ${descriptionClassName}`}>{step.description}</p>
           </button>
         );
       })}

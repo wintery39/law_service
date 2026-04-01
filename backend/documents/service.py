@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import AsyncIterator, Literal
 
 from documents.evaluation import DocumentDraftEvaluator
@@ -23,6 +24,60 @@ from storage.observability import get_logger, log_info
 
 
 logger = get_logger(__name__)
+PROMPT_PROFILE_SECTION_MARKERS: dict[str, dict[str, list[str]]] = {
+    "fact_finding_report": {
+        "subject_profile": ["- 소속:", "- 직위/직급:", "- 성명:", "- 사건명:"],
+        "allegations": ["- 혐의사실 1:", "- 혐의사실 2:"],
+        "findings": ["- 인정되는 사실", "- 다툼이 있는 사항", "- 확인되지 않은 사항"],
+        "evidence_summary": ["- 증거 1:", "- 증거 2:", "- 각 증거로 확인되는 내용:"],
+        "mitigating_aggravating": ["- 유리한 정상:", "- 불리한 정상:"],
+        "recommendation": ["- 징계의결 요구 여부 또는 추가 조사 필요 여부:"],
+    },
+    "committee_reference": {
+        "case_overview": ["- 사건명:", "- 심의 일시:", "- 심의 대상자:", "- 사건 요약:"],
+        "subject_profile": ["- 소속:", "- 직위/직급:", "- 성명:"],
+        "fact_summary": ["- 사실관계 1:", "- 사실관계 2:", "- 사실관계 3:"],
+        "issues": ["- 쟁점 1:", "- 쟁점 2:", "- 쟁점 3:"],
+        "evidence_summary": ["- 증거 1:", "- 증거 2:", "- 증거 3:"],
+        "statements": ["- 대상자 진술 요지:", "- 참고인/관계인 진술 요지:", "- 다툼이 있는 부분:"],
+        "mitigating_aggravating": ["- 유리한 정상:", "- 불리한 정상:"],
+        "applicable_rules": ["- 관련 법령/규정:", "- 검토 포인트:"],
+        "judgment_points": ["- 사실인정 포인트", "- 양정 판단 포인트", "- 추가 확인 필요 사항"],
+    },
+    "disciplinary_resolution": {
+        "subject_profile": ["- 소속:", "- 직위(직급):", "- 성명:"],
+        "decision_order": ["- "],
+        "reasoning": [
+            "가. 인정되는 사실",
+            "나. 증거의 판단",
+            "다. 적용 규정",
+            "라. 양정 판단",
+            "- 비위의 정도",
+            "- 고의/과실",
+            "- 조직 영향",
+            "- 유리한 정상",
+            "- 불리한 정상",
+        ],
+        "decision_date": ["- 의결일자:"],
+        "committee_name": ["- 징계위원회명:"],
+        "committee_members": ["- 위원장 및 위원 표시:"],
+    },
+    "attendance_notice": {
+        "personal_info": ["- 성명:", "- 소속:", "- 직위(직급):", "- 주소:"],
+        "appearance_datetime": ["- "],
+        "appearance_location": ["- "],
+        "notes": [
+            "- 출석하여 진술하기를 원하지 않는 경우 진술권 포기서를 제출할 수 있음",
+            "- 서면진술을 원할 경우 지정 기한까지 진술서를 제출할 수 있음",
+            "- 정당한 사유 없이 불출석하고 서면진술도 없으면 진술 의사가 없는 것으로 보고 처리될 수 있음",
+            "- 필요 시 소명자료 또는 증빙자료를 제출할 수 있음",
+        ],
+        "notice_statement": ["- 관련 규정에 따라 위와 같이 귀하의 출석을 통지합니다."],
+        "sender": ["- 통지일:", "- 징계위원회명:", "- 위원회 청인 또는 직인 표시"],
+        "recipient": ["- 귀하"],
+        "appendix": ["- 필요 시 진술권 포기서 양식"],
+    },
+}
 
 
 def build_document_stream_error_event(error: Exception) -> DocumentStreamEvent:
@@ -177,8 +232,19 @@ class DocumentGenerationService:
         if self._should_use_gemini():
             if self.gemini_generator is None or not self.gemini_generator.is_configured():
                 raise RuntimeError("Gemini document generation is enabled but GEMINI_API_KEY is not configured.")
-            generated = await self.gemini_generator.generate_sections(request, evidence_pack, plan, context)
-            return self._merge_sections_with_heuristics(request, evidence_pack, plan, generated, context)
+            try:
+                generated = await self.gemini_generator.generate_sections(request, evidence_pack, plan, context)
+            except Exception:
+                if self.settings.generation_provider == "gemini":
+                    raise
+                logger.warning(
+                    "gemini section generation failed; falling back to heuristic generation | request_id=%s doc_type=%s",
+                    context.request_id,
+                    request.user_intent.doc_type,
+                    exc_info=True,
+                )
+            else:
+                return self._merge_sections_with_heuristics(request, evidence_pack, plan, generated, context)
 
         return self._generate_sections_heuristically(request, evidence_pack, plan, context)
 
@@ -226,7 +292,7 @@ class DocumentGenerationService:
             merged_sections.append(
                 heuristic_section.model_copy(
                     update={
-                        "text": llm_section.text.strip(),
+                        "text": self._normalize_generated_text(request, section_plan.section_id, llm_section.text),
                         "open_issues": self._merge_open_issues(llm_section.open_issues, heuristic_section.open_issues),
                     }
                 )
@@ -243,6 +309,26 @@ class DocumentGenerationService:
             seen.add(normalized)
             merged.append(normalized)
         return merged
+
+    def _normalize_generated_text(
+        self,
+        request: DocumentGenerationRequest,
+        section_id: str,
+        text: str,
+    ) -> str:
+        normalized = text.strip()
+        prompt_profile = request.constraints.prompt_profile
+        if prompt_profile in PROMPT_PROFILE_SECTION_MARKERS:
+            normalized = self._normalize_prompt_profile_text(prompt_profile, section_id, normalized)
+        return normalized
+
+    def _normalize_prompt_profile_text(self, prompt_profile: str, section_id: str, text: str) -> str:
+        normalized = text.replace("\r\n", "\n").strip()
+        markers = PROMPT_PROFILE_SECTION_MARKERS[prompt_profile].get(section_id, [])
+        for marker in markers:
+            normalized = re.sub(rf"(?<!\n){re.escape(marker)}", f"\n{marker}", normalized)
+        normalized = re.sub(r"\n{3,}", "\n\n", normalized)
+        return normalized.lstrip("\n")
 
     def _should_use_gemini(self) -> bool:
         if self.settings.generation_provider == "heuristic":

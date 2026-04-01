@@ -33,6 +33,7 @@ export default function WorkflowPage() {
 
         setCaseDetail(detail);
         const activeStep =
+          detail.workflowStages.find((step) => step.id === 'review_feedback' && step.status === 'active') ??
           detail.workflowStages.find((step) => step.status === 'active') ??
           [...detail.workflowStages].reverse().find((step) => step.status === 'completed') ??
           detail.workflowStages[0];
@@ -159,10 +160,10 @@ export default function WorkflowPage() {
       <section className="rounded-[32px] border border-white/60 bg-white/95 p-6 shadow-panel">
         <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
           <div className="max-w-3xl">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Workflow Visualizer</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">사건 진행 현황</p>
             <h2 className="mt-2 font-serif text-4xl font-semibold text-slate-950">{detail.title}</h2>
             <p className="mt-4 text-sm leading-7 text-slate-600">
-              사건 등록부터 문서 검토와 피드백 반영까지의 흐름을 한눈에 보여주는 워크플로우 화면입니다.
+              사건 처리 단계와 관련 문서, 검토 이력을 한눈에 확인할 수 있는 화면입니다.
             </p>
           </div>
           <div className="flex flex-wrap gap-3">
@@ -181,7 +182,7 @@ export default function WorkflowPage() {
 
       <PageSection
         title="전체 문서 흐름"
-        description="사건 등록, 첨부 자료, 정보 요청, 문서 생성, 검토/피드백 단계가 같은 키 기준으로 연결됩니다."
+        description="사건 등록부터 문서 생성, 검토와 피드백 반영까지의 진행 단계를 정리했습니다."
       >
         <WorkflowStepper
           steps={steps}
@@ -193,7 +194,7 @@ export default function WorkflowPage() {
       <div className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
         <PageSection
           title={selectedStep.title}
-          description="선택한 단계의 핵심 설명과 관련 데이터를 확인할 수 있습니다."
+          description="선택한 단계의 설명과 관련 데이터를 확인할 수 있습니다."
         >
           <div className="rounded-[32px] border border-white/60 bg-white/95 p-6 shadow-soft">
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{selectedStep.caption}</p>
@@ -203,7 +204,7 @@ export default function WorkflowPage() {
           </div>
         </PageSection>
 
-        <PageSection title="요약 지점" description="발표 시 설명 포인트를 빠르게 꺼낼 수 있도록 핵심 상태를 정리했습니다.">
+        <PageSection title="요약 정보" description="사건 처리 현황을 빠르게 확인할 수 있도록 핵심 상태를 정리했습니다.">
           <div className="space-y-4 rounded-[32px] border border-white/60 bg-white/95 p-6 shadow-soft">
             <div className="rounded-2xl bg-slate-50 px-4 py-4">
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">현재 사건 상태</p>
@@ -218,12 +219,6 @@ export default function WorkflowPage() {
             <div className="rounded-2xl bg-slate-50 px-4 py-4">
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">추가 질문 수</p>
               <p className="mt-3 text-2xl font-semibold text-slate-950">{detail.questions.length}건</p>
-            </div>
-            <div className="rounded-2xl bg-blue-50/70 px-4 py-4">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700">발표 포인트</p>
-              <p className="mt-3 text-sm leading-7 text-slate-700">
-                이 화면은 단순 문서 편집기가 아니라 사건 전체 처리 절차를 안내하는 시스템이라는 점을 보여주기 위한 데모 장면입니다.
-              </p>
             </div>
           </div>
         </PageSection>

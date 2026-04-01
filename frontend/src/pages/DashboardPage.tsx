@@ -87,17 +87,17 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-8">
-      <section className="rounded-[32px] border border-white/50 bg-gradient-to-br from-navy-950 via-navy-900 to-blue-800 p-6 text-white shadow-panel lg:p-8">
+      <section className="rounded-[32px] border border-navy-100 bg-gradient-to-br from-blue-50 via-white to-slate-50 p-6 shadow-soft lg:p-8">
         <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
           <div className="max-w-3xl">
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-white/70">
-              군 내 법률 문서 생성 지원 서비스
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-navy-800">
+              징계 사건 관리 시스템
             </p>
-            <h2 className="mt-3 font-serif text-4xl font-semibold leading-tight lg:text-5xl">
-              복잡한 사건 처리 흐름을 문서 중심으로 정리합니다.
+            <h2 className="mt-3 font-serif text-4xl font-semibold leading-tight text-slate-950 lg:text-5xl">
+              사건 접수부터 문서 정리까지 한 화면에서 관리합니다.
             </h2>
-            <p className="mt-4 text-sm leading-7 text-white/80 lg:text-base">
-              사건 등록부터 문서 생성, 추가 질문, 최종 제출 직전 상태까지 한 화면에서 확인할 수 있도록 구성했습니다.
+            <p className="mt-4 text-sm leading-7 text-slate-700 lg:text-base">
+              사실관계, 생성 문서, 추가 질의, 검토 이력을 사건 단위로 추적할 수 있도록 구성했습니다.
             </p>
           </div>
           <div className="flex flex-wrap gap-3">
@@ -115,7 +115,7 @@ export default function DashboardPage() {
         <SummaryCard
           title="전체 사건"
           value={metrics.totalCases}
-          description="현재 데모 환경에 적재된 전체 사건 수"
+          description="현재 등록되어 관리 중인 전체 사건 수"
           accent="navy"
         />
         <SummaryCard
@@ -155,7 +155,7 @@ export default function DashboardPage() {
         {cases.length === 0 ? (
           <EmptyState
             title="등록된 사건이 없습니다."
-            description="첫 사건을 등록하면 문서 생성 흐름과 질문 응답 화면을 바로 확인할 수 있습니다."
+            description="첫 사건을 등록하면 관련 문서와 진행 현황이 사건 상세 화면에 정리됩니다."
             action={
               <Link
                 to="/cases/new"
