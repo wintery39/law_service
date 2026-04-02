@@ -826,9 +826,11 @@ class CaseWorkflowService:
                 ],
             ),
         ]
+        base_request = self._build_base_pipeline_request(payload)
         results = await asyncio.gather(
             *[
                 self._generate_pipeline_document(
+                    base_request,
                     payload,
                     case_id,
                     document_type,
@@ -852,6 +854,7 @@ class CaseWorkflowService:
 
     async def _generate_pipeline_document(
         self,
+        base_request,
         payload: CaseCreatePayload,
         case_id: str,
         document_type: str,
@@ -862,7 +865,13 @@ class CaseWorkflowService:
         if self.document_generation_service is None:
             raise RuntimeError("document generation service is not configured")
 
-        request = self._build_pipeline_request(payload, pipeline_doc_type, prompt_profile, extra_instructions)
+        request = self._build_pipeline_request(
+            base_request,
+            payload,
+            pipeline_doc_type,
+            prompt_profile,
+            extra_instructions,
+        )
         context = ObservationContext(
             request_id=f"{case_id}-{document_type}",
             corpus_version="v1",
@@ -870,13 +879,7 @@ class CaseWorkflowService:
         )
         return await self.document_generation_service.generate(request, context)
 
-    def _build_pipeline_request(
-        self,
-        payload: CaseCreatePayload,
-        pipeline_doc_type: str,
-        prompt_profile: str | None,
-        extra_instructions: list[str],
-    ):
+    def _build_base_pipeline_request(self, payload: CaseCreatePayload):
         generation_payload = CaseDocumentGenerationRequest(
             title=payload.title,
             caseType=payload.caseType,
@@ -887,7 +890,17 @@ class CaseWorkflowService:
             summary=payload.summary,
             details=payload.details,
         )
-        request = build_document_generation_request(generation_payload)
+        return build_document_generation_request(generation_payload)
+
+    def _build_pipeline_request(
+        self,
+        base_request,
+        payload: CaseCreatePayload,
+        pipeline_doc_type: str,
+        prompt_profile: str | None,
+        extra_instructions: list[str],
+    ):
+        request = base_request
         attachment_instruction = (
             f"첨부자료 요약: {payload.attachmentSummary}"
             if payload.attachmentProvided and payload.attachmentSummary
@@ -909,10 +922,15 @@ class CaseWorkflowService:
             )
         supplemental_text = "\n".join(supplemental_lines)
         narrative_suffix = f"\n{supplemental_text}" if supplemental_text else ""
+        session_suffix = prompt_profile or pipeline_doc_type
+        session_id = f"{request.session_id}-{session_suffix}"
         structured_case = request.structured_case
-        if structured_case is not None and narrative_suffix:
+        if structured_case is not None:
             structured_case = structured_case.model_copy(
-                update={"narrative": f"{structured_case.narrative}{narrative_suffix}"}
+                update={
+                    "session_id": session_id,
+                    "narrative": f"{structured_case.narrative}{narrative_suffix}" if narrative_suffix else structured_case.narrative,
+                }
             )
 
         constraints = request.constraints.model_copy(
@@ -927,6 +945,7 @@ class CaseWorkflowService:
         )
         return request.model_copy(
             update={
+                "session_id": session_id,
                 "user_intent": DocumentIntent(doc_type=pipeline_doc_type),
                 "user_text": f"{request.user_text}{narrative_suffix}" if narrative_suffix else request.user_text,
                 "structured_case": structured_case,
@@ -982,64 +1001,41 @@ class CaseWorkflowService:
     ) -> str:
         blocks: list[str] = []
         if prompt_profile in STRUCTURED_RENDER_PROMPT_PROFILES:
-            additional_needed_info: list[str] = []
-            for item in response.checklist_missing_info:
-                if item not in additional_needed_info:
-                    additional_needed_info.append(item)
-            for section in response.draft.sections:
-                for item in section.open_issues:
-                    if item not in additional_needed_info:
-                        additional_needed_info.append(item)
             if prompt_profile == "attendance_notice":
                 blocks.append("제목: 출석통지서")
             if prompt_profile == "committee_reference":
                 blocks.append(f"제목: {response.draft.title}")
             if prompt_profile == "disciplinary_resolution":
                 blocks.append("제목: 징계의결서")
-            if additional_needed_info:
-                if prompt_profile == "fact_finding_report":
-                    checklist = "\n".join(f"- {item}" for item in additional_needed_info[:5])
-                    blocks.append(f"추가 필요 정보\n{checklist}")
-                if prompt_profile == "attendance_notice":
-                    checklist = "\n".join(f"- {item}" for item in additional_needed_info[:5])
-                    blocks.append(f"누락정보\n{checklist}")
-                if prompt_profile == "disciplinary_resolution":
-                    checklist = "\n".join(f"- {item}" for item in additional_needed_info[:5])
-                    blocks.append(f"누락정보\n{checklist}")
 
         for index, section in enumerate(response.draft.sections, start=1):
-            section_lines = [section.text]
-            if prompt_profile not in STRUCTURED_RENDER_PROMPT_PROFILES and section.open_issues:
-                section_lines.append(f"추가 이슈: {', '.join(section.open_issues)}")
             if prompt_profile == "attendance_notice" and section.section_id == "appendix":
-                blocks.append(f"[별첨]\n" + "\n".join(section_lines))
+                blocks.append(f"[별첨]\n{section.text}")
                 continue
-            blocks.append(f"{index}. {section.title}\n" + "\n".join(section_lines))
+            blocks.append(f"{index}. {section.title}\n{section.text}")
 
-        if prompt_profile in STRUCTURED_RENDER_PROMPT_PROFILES:
-            return "\n\n".join(blocks)
-
-        next_index = len(blocks) + 1
-        if response.checklist_missing_info:
-            checklist = "\n".join(f"- {item}" for item in response.checklist_missing_info[:5])
-            blocks.append(f"{next_index}. 추가 확인 필요\n{checklist}")
-            next_index += 1
-        if response.warnings:
-            warnings = "\n".join(f"- {warning.message}" for warning in response.warnings[:5])
-            blocks.append(f"{next_index}. 검토 메모\n{warnings}")
-            next_index += 1
-
-        attachment_text = payload.attachmentSummary if payload.attachmentProvided else "없음"
-        blocks.append(
-            f"{next_index}. 사건 메타데이터\n"
-            f"사건 제목: {payload.title}\n"
-            f"발생 일시: {payload.occurredAt}\n"
-            f"발생 장소: {payload.location}\n"
-            f"작성자: {payload.author}\n"
-            f"관련자: {', '.join(payload.relatedPersons)}\n"
-            f"첨부자료 요약: {attachment_text}"
-        )
         return "\n\n".join(blocks)
+
+    def _build_generated_version_note(
+        self,
+        base_note: str,
+        response: DocumentGenerationResponse,
+    ) -> str:
+        parts = [base_note.strip()]
+        missing_items: list[str] = []
+        for item in response.checklist_missing_info:
+            if item not in missing_items:
+                missing_items.append(item)
+        for section in response.draft.sections:
+            for item in section.open_issues:
+                if item not in missing_items:
+                    missing_items.append(item)
+
+        if missing_items:
+            parts.append(f"추가 확인 필요: {', '.join(missing_items[:3])}.")
+        if response.warnings:
+            parts.append(f"검토 경고 {len(response.warnings)}건이 함께 기록되었습니다.")
+        return " ".join(part for part in parts if part).strip()
 
     def _build_document_templates(
         self,
@@ -1086,7 +1082,10 @@ class CaseWorkflowService:
                             f"첨부자료 요약: {attachment_text}"
                         ),
                         "versionNote": (
-                            "관련 조항 검색과 grounded generation을 거쳐 조사보고 초안을 생성했습니다."
+                            self._build_generated_version_note(
+                                "관련 조항 검색과 grounded generation을 거쳐 조사보고 초안을 생성했습니다.",
+                                generated,
+                            )
                             if generated is not None
                             else "사건 등록 직후 필수 문서 초안이 완성되었습니다."
                         ),
@@ -1146,7 +1145,10 @@ class CaseWorkflowService:
                             "- 필요 시 진술권 포기서 양식"
                         ),
                         "versionNote": (
-                            "관련 조항 검색과 grounded generation을 거쳐 출석통지서 초안을 생성했습니다."
+                            self._build_generated_version_note(
+                                "관련 조항 검색과 grounded generation을 거쳐 출석통지서 초안을 생성했습니다.",
+                                generated,
+                            )
                             if generated is not None
                             else "사건 등록 직후 필수 문서 초안이 완성되었습니다."
                         ),
@@ -1211,7 +1213,10 @@ class CaseWorkflowService:
                             f"- {attachment_text}"
                         ),
                         "versionNote": (
-                            "관련 조항 검색과 grounded generation을 거쳐 위원회 참고 자료 초안을 생성했습니다."
+                            self._build_generated_version_note(
+                                "관련 조항 검색과 grounded generation을 거쳐 위원회 참고 자료 초안을 생성했습니다.",
+                                generated,
+                            )
                             if generated is not None
                             else "사건 등록 직후 기본 초안이 생성되었습니다."
                         ),
@@ -1270,7 +1275,10 @@ class CaseWorkflowService:
                             "- 위원장 및 위원 표시: 자료상 명확하지 않음"
                         ),
                         "versionNote": (
-                            "관련 조항 검색과 grounded generation을 거쳐 징계의결서 초안 구조를 생성했습니다."
+                            self._build_generated_version_note(
+                                "관련 조항 검색과 grounded generation을 거쳐 징계의결서 초안 구조를 생성했습니다.",
+                                generated,
+                            )
                             if generated is not None
                             else "사건 등록 직후 기본 초안이 생성되었습니다."
                         ),

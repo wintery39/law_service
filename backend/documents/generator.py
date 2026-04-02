@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from functools import lru_cache
 
 from schemas import (
     DocumentGenerationRequest,
@@ -84,6 +85,27 @@ OPENING_BY_SECTION = {
     "request": "현재 단계에서 요청할 사항은 다음과 같습니다.",
 }
 
+NARRATIVE_FIELD_MAPPING = {
+    "사건 제목": "title",
+    "사건 유형": "case_type",
+    "발생 일시": "occurred_at",
+    "발생 장소": "location",
+    "작성자": "author",
+    "관련자": "related_people",
+    "사건 개요": "summary",
+    "상세 사실관계": "details",
+    "첨부자료 요약": "attachment_summary",
+    "출석 일시": "appearance_datetime",
+    "출석 장소": "appearance_location",
+    "징계위원회명": "committee_name",
+    "통지일": "notice_date",
+    "의결주문": "decision_order",
+    "최종 의결결론": "decision_order",
+    "인정 사실": "recognized_fact",
+    "의결일자": "decision_date",
+    "위원장 및 위원 표시": "committee_members",
+}
+
 
 def _unique_strings(values: list[str]) -> list[str]:
     seen: set[str] = set()
@@ -93,6 +115,44 @@ def _unique_strings(values: list[str]) -> list[str]:
             seen.add(value)
             result.append(value)
     return result
+
+
+@lru_cache(maxsize=256)
+def _parse_narrative_fields_cached(narrative: str) -> tuple[tuple[str, str], ...]:
+    fields: dict[str, str] = {}
+    for line in narrative.splitlines():
+        prefix, _, value = line.partition(":")
+        key = NARRATIVE_FIELD_MAPPING.get(prefix.strip())
+        if key is not None:
+            fields[key] = value.strip()
+    return tuple(fields.items())
+
+
+@lru_cache(maxsize=256)
+def _parse_related_people_cached(raw_value: str) -> tuple[tuple[str, str, str], ...]:
+    people: list[tuple[str, str, str]] = []
+    for item in [value.strip() for value in raw_value.split(",") if value.strip()]:
+        parts = item.split()
+        rank = "자료상 명확하지 않음"
+        name = item
+        if len(parts) >= 2:
+            first_token = parts[0]
+            last_token = parts[-1]
+            if first_token in COMMON_RANK_TOKENS and last_token not in COMMON_RANK_TOKENS:
+                rank = first_token
+                name = " ".join(parts[1:])
+            elif last_token in COMMON_RANK_TOKENS and first_token not in COMMON_RANK_TOKENS:
+                rank = last_token
+                name = " ".join(parts[:-1])
+        people.append((item, rank, name))
+    return tuple(people)
+
+
+@lru_cache(maxsize=256)
+def _split_sentences_cached(text: str | None) -> tuple[str, ...]:
+    if not text:
+        return ()
+    return tuple(sentence.strip(" .") for sentence in text.replace("\n", " ").split(".") if sentence.strip(" ."))
 
 
 class DocumentSectionGenerator:
@@ -524,74 +584,27 @@ class DocumentSectionGenerator:
         return self._dedupe(selected)
 
     def _parse_narrative_fields(self, narrative: str) -> dict[str, str]:
-        mapping = {
-            "사건 제목": "title",
-            "사건 유형": "case_type",
-            "발생 일시": "occurred_at",
-            "발생 장소": "location",
-            "작성자": "author",
-            "관련자": "related_people",
-            "사건 개요": "summary",
-            "상세 사실관계": "details",
-            "첨부자료 요약": "attachment_summary",
-            "출석 일시": "appearance_datetime",
-            "출석 장소": "appearance_location",
-            "징계위원회명": "committee_name",
-            "통지일": "notice_date",
-            "의결주문": "decision_order",
-            "최종 의결결론": "decision_order",
-            "인정 사실": "recognized_fact",
-            "의결일자": "decision_date",
-            "위원장 및 위원 표시": "committee_members",
-        }
-        fields: dict[str, str] = {}
-        for line in narrative.splitlines():
-            prefix, _, value = line.partition(":")
-            key = mapping.get(prefix.strip())
-            if key is not None:
-                fields[key] = value.strip()
-        return fields
+        return dict(_parse_narrative_fields_cached(narrative))
 
     def _parse_related_people(self, raw_value: str) -> list[dict[str, str]]:
-        people: list[dict[str, str]] = []
-        for item in [value.strip() for value in raw_value.split(",") if value.strip()]:
-            parts = item.split()
-            rank = "자료상 명확하지 않음"
-            name = item
-            if len(parts) >= 2:
-                first_token = parts[0]
-                last_token = parts[-1]
-                if self._looks_like_rank(first_token) and not self._looks_like_rank(last_token):
-                    rank = first_token
-                    name = " ".join(parts[1:])
-                elif self._looks_like_rank(last_token) and not self._looks_like_rank(first_token):
-                    rank = last_token
-                    name = " ".join(parts[:-1])
-            people.append({"raw": item, "rank": rank, "name": name})
-        return people
+        return [
+            {"raw": raw, "rank": rank, "name": name}
+            for raw, rank, name in _parse_related_people_cached(raw_value)
+        ]
 
     def _looks_like_rank(self, token: str) -> bool:
         return token.strip() in COMMON_RANK_TOKENS
 
     def _first_sentence(self, text: str | None) -> str | None:
-        if not text:
-            return None
-        for sentence in text.replace("\n", " ").split("."):
-            normalized = sentence.strip(" .")
-            if normalized:
-                return normalized
-        return None
+        sentences = _split_sentences_cached(text)
+        return sentences[0] if sentences else None
 
     def _second_sentence(self, text: str | None) -> str | None:
-        if not text:
-            return None
-        sentences = [sentence.strip(" .") for sentence in text.replace("\n", " ").split(".") if sentence.strip(" .")]
+        sentences = _split_sentences_cached(text)
         return sentences[1] if len(sentences) > 1 else None
 
     def _split_sentences(self, text: str | None) -> list[str]:
-        if not text:
-            return []
-        return [sentence.strip(" .") for sentence in text.replace("\n", " ").split(".") if sentence.strip(" .")]
+        return list(_split_sentences_cached(text))
 
     def _normalize_occurred_at(self, value: str | None) -> str:
         if not value:

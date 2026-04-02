@@ -24,6 +24,32 @@ from storage.observability import get_logger, log_info
 
 
 logger = get_logger(__name__)
+PROMPT_LEAK_LINE_PREFIXES = (
+    "추가 필요 정보",
+    "누락정보",
+    "출력 형식",
+    "입력값",
+    "추가 지시",
+    "작성 원칙",
+    "중요:",
+    "목표:",
+)
+PROMPT_LEAK_LINE_PATTERNS = (
+    re.compile(
+        r'^\s*["\']?(document_title|document_type|user_text|objective|audience|constraints|structured_case|plan|evidence)["\']?\s*:'
+    ),
+    re.compile(r"^\s*[\{\}\[\]]\s*,?$"),
+)
+PROMPT_LEAK_SUBSTRINGS = (
+    "내부적으로는 다음",
+    "내부적으로 다음",
+    "그러나 출력에는",
+    "출력은 반드시 JSON schema",
+    "responseJsonSchema",
+    "문서 제목은 backend가 별도로 표시",
+    "heading 번호와 section title은 backend가 붙이므로",
+    "citations는 backend가 별도로 붙이므로",
+)
 PROMPT_PROFILE_SECTION_MARKERS: dict[str, dict[str, list[str]]] = {
     "fact_finding_report": {
         "subject_profile": ["- 소속:", "- 직위/직급:", "- 성명:", "- 사건명:"],
@@ -292,7 +318,13 @@ class DocumentGenerationService:
             merged_sections.append(
                 heuristic_section.model_copy(
                     update={
-                        "text": self._normalize_generated_text(request, section_plan.section_id, llm_section.text),
+                        "text": self._normalize_generated_text(
+                            request,
+                            section_plan.section_id,
+                            section_plan.title,
+                            llm_section.text,
+                        )
+                        or heuristic_section.text,
                         "open_issues": self._merge_open_issues(llm_section.open_issues, heuristic_section.open_issues),
                     }
                 )
@@ -314,9 +346,10 @@ class DocumentGenerationService:
         self,
         request: DocumentGenerationRequest,
         section_id: str,
+        section_title: str,
         text: str,
     ) -> str:
-        normalized = text.strip()
+        normalized = self._strip_prompt_leakage(section_title, text)
         prompt_profile = request.constraints.prompt_profile
         if prompt_profile in PROMPT_PROFILE_SECTION_MARKERS:
             normalized = self._normalize_prompt_profile_text(prompt_profile, section_id, normalized)
@@ -327,8 +360,52 @@ class DocumentGenerationService:
         markers = PROMPT_PROFILE_SECTION_MARKERS[prompt_profile].get(section_id, [])
         for marker in markers:
             normalized = re.sub(rf"(?<!\n){re.escape(marker)}", f"\n{marker}", normalized)
+        normalized = self._trim_to_first_marker(normalized, markers)
         normalized = re.sub(r"\n{3,}", "\n\n", normalized)
         return normalized.lstrip("\n")
+
+    def _strip_prompt_leakage(self, section_title: str, text: str) -> str:
+        normalized = text.replace("\r\n", "\n").strip()
+        normalized = re.sub(rf"^\d+\.\s*{re.escape(section_title)}\s*$", "", normalized, count=1, flags=re.MULTILINE)
+        normalized = re.sub(rf"^{re.escape(section_title)}\s*$", "", normalized, count=1, flags=re.MULTILINE)
+        normalized = re.sub(r"^제목:\s*.+$", "", normalized, count=1, flags=re.MULTILINE)
+
+        lines: list[str] = []
+        previous_blank = False
+        for raw_line in normalized.splitlines():
+            line = raw_line.strip()
+            if not line:
+                if not previous_blank:
+                    lines.append("")
+                previous_blank = True
+                continue
+            if line.startswith("```"):
+                continue
+            if any(line.startswith(prefix) for prefix in PROMPT_LEAK_LINE_PREFIXES):
+                continue
+            if any(pattern.match(line) for pattern in PROMPT_LEAK_LINE_PATTERNS):
+                continue
+            if any(fragment in line for fragment in PROMPT_LEAK_SUBSTRINGS):
+                continue
+            lines.append(line)
+            previous_blank = False
+
+        cleaned = "\n".join(lines).strip()
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+        return cleaned
+
+    def _trim_to_first_marker(self, text: str, markers: list[str]) -> str:
+        if not text or not markers:
+            return text
+
+        first_positions = [text.find(marker) for marker in markers if text.find(marker) >= 0]
+        if not first_positions:
+            return text
+
+        first_marker_position = min(first_positions)
+        if first_marker_position <= 0:
+            return text
+        return text[first_marker_position:]
 
     def _should_use_gemini(self) -> bool:
         if self.settings.generation_provider == "heuristic":

@@ -506,18 +506,23 @@ def test_create_disciplinary_case_returns_frontend_ready_case_detail(
     assert payload["documents"][1]["title"] == "출석통지서"
     assert payload["documents"][1]["status"] == "completed"
     assert payload["documents"][1]["content"].startswith("제목: 출석통지서")
-    assert "누락정보" in payload["documents"][1]["content"]
+    assert "누락정보" not in payload["documents"][1]["content"]
     assert "1. 인적사항" in payload["documents"][1]["content"]
+    assert "출석통지서 초안을 생성했습니다." in payload["documents"][1]["versionHistory"][0]["note"]
+    assert "추가 확인 필요: 출석 일시, 출석 장소, 징계위원회명." in payload["documents"][1]["versionHistory"][0]["note"]
     assert payload["documents"][2]["title"] == "위원회 참고 자료"
     assert payload["documents"][2]["status"] == "generating"
     assert payload["documents"][2]["content"].startswith("제목: 징계위원회 참고자료")
     assert "1. 사건 개요" in payload["documents"][2]["content"]
     assert "9. 위원회 판단 포인트" in payload["documents"][2]["content"]
+    assert "추가 필요 정보" not in payload["documents"][2]["content"]
     assert payload["documents"][3]["title"] == "징계의결서/처분서"
     assert payload["documents"][3]["status"] == "pending"
     assert payload["documents"][3]["content"].startswith("제목: 징계의결서")
     assert "2. 의결주문" in payload["documents"][3]["content"]
     assert "3. 이유" in payload["documents"][3]["content"]
+    assert "누락정보" not in payload["documents"][3]["content"]
+    assert "추가 확인 필요: 최종 의결결론, 의결일자, 징계위원회명." in payload["documents"][3]["versionHistory"][0]["note"]
     assert payload["documents"][0]["legalBasisIds"]
     assert payload["workflowStages"][3]["status"] == "active"
     assert payload["workflowStages"][4]["status"] == "pending"

@@ -408,12 +408,12 @@ async def test_generate_fact_finding_report_retries_invalid_json_and_normalizes_
                                             "sections": [
                                                 {
                                                     "section_id": "overview",
-                                                    "text": "본 조사는 현재 확보된 자료를 기준으로 장비 상자 이동 정황의 사실관계를 정리하기 위해 작성한다.",
+                                                    "text": "제목: 사실결과조사보고\n본 조사는 현재 확보된 자료를 기준으로 장비 상자 이동 정황의 사실관계를 정리하기 위해 작성한다.",
                                                     "open_issues": ["사건 개시 일자"],
                                                 },
                                                 {
                                                     "section_id": "subject_profile",
-                                                    "text": "- 소속: 자료상 명확하지 않음- 직위/직급: 병장- 성명: 최민수- 사건명: 창고 자산 반출 의혹 조사",
+                                                    "text": "2. 징계혐의자 인적사항\n- 소속: 자료상 명확하지 않음- 직위/직급: 병장- 성명: 최민수- 사건명: 창고 자산 반출 의혹 조사",
                                                     "open_issues": [],
                                                 },
                                                 {
@@ -428,7 +428,7 @@ async def test_generate_fact_finding_report_retries_invalid_json_and_normalizes_
                                                 },
                                                 {
                                                     "section_id": "evidence_summary",
-                                                    "text": "- 증거 1: CCTV 캡처본- 증거 2: 창고 출입기록- 각 증거로 확인되는 내용: 이동 시점과 출입 정황이 확인된다.",
+                                                    "text": "출력 형식\n- 증거 1: CCTV 캡처본- 증거 2: 창고 출입기록- 각 증거로 확인되는 내용: 이동 시점과 출입 정황이 확인된다.",
                                                     "open_issues": [],
                                                 },
                                                 {
@@ -507,14 +507,122 @@ async def test_generate_fact_finding_report_retries_invalid_json_and_normalizes_
     subject_profile = next(section for section in response.draft.sections if section.section_id == "subject_profile")
     allegations = next(section for section in response.draft.sections if section.section_id == "allegations")
     evidence_summary = next(section for section in response.draft.sections if section.section_id == "evidence_summary")
+    overview = next(section for section in response.draft.sections if section.section_id == "overview")
+    assert not overview.text.startswith("제목:")
     assert subject_profile.text == (
         "- 소속: 자료상 명확하지 않음\n"
         "- 직위/직급: 병장\n"
         "- 성명: 최민수\n"
         "- 사건명: 창고 자산 반출 의혹 조사"
     )
+    assert "2. 징계혐의자 인적사항" not in subject_profile.text
     assert "\n- 혐의사실 2:" in allegations.text
+    assert "출력 형식" not in evidence_summary.text
     assert "\n- 각 증거로 확인되는 내용:" in evidence_summary.text
+
+
+async def test_generate_fact_finding_report_falls_back_to_heuristic_when_cleaned_section_is_empty() -> None:
+    fixture = seed_related_article_fixture()
+
+    generated = {
+        "sections": [
+            {
+                "section_id": "overview",
+                "text": "본 조사는 현재 확보된 자료를 기준으로 장비 상자 이동 정황의 사실관계를 정리하기 위해 작성한다.",
+                "open_issues": [],
+            },
+            {
+                "section_id": "subject_profile",
+                "text": "제목: 사실결과조사보고\n출력 형식\n추가 필요 정보",
+                "open_issues": [],
+            },
+            {
+                "section_id": "allegations",
+                "text": "- 혐의사실 1: 2026-03-19 09:00경 창고에서 장비 상자 이동 정황이 확인되었다.\n- 혐의사실 2: 승인 여부는 자료상 명확하지 않다.",
+                "open_issues": [],
+            },
+            {
+                "section_id": "findings",
+                "text": "- 인정되는 사실: CCTV와 출입기록상 이동 정황이 확인된다.\n- 다툼이 있는 사항: 이동 경위와 승인 여부 진술이 일치하지 않는다.\n- 확인되지 않은 사항: 행위자 특정은 확인되지 않음.",
+                "open_issues": [],
+            },
+            {
+                "section_id": "evidence_summary",
+                "text": "- 증거 1: CCTV 캡처본\n- 증거 2: 창고 출입기록\n- 각 증거로 확인되는 내용: 이동 시점과 출입 정황이 확인된다.",
+                "open_issues": [],
+            },
+            {
+                "section_id": "mitigating_aggravating",
+                "text": "- 유리한 정상: 자료상 명확하지 않음\n- 불리한 정상: 승인 여부가 미확정 상태다.",
+                "open_issues": [],
+            },
+            {
+                "section_id": "integrated_opinion",
+                "text": "현재 자료에 따르면 이동 정황은 확인되나 승인 여부는 추가 확인이 필요하다.",
+                "open_issues": [],
+            },
+            {
+                "section_id": "recommendation",
+                "text": "- 징계의결 요구 여부 또는 추가 조사 필요 여부: 승인 기록과 관련자 진술을 추가 확인할 필요가 있다.",
+                "open_issues": [],
+            },
+            {
+                "section_id": "attachments",
+                "text": "- CCTV 캡처본\n- 창고 출입기록",
+                "open_issues": [],
+            },
+        ]
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/models/gemini-test:generateContent")
+        return httpx.Response(
+            200,
+            json={"candidates": [{"content": {"parts": [{"text": json.dumps(generated, ensure_ascii=False)}]}}]},
+        )
+
+    service = DocumentGenerationService(
+        evidence_collector=EvidenceCollector(
+            related_articles_client=InProcessRelatedArticlesClient(fixture.service),
+            repository=fixture.repository,
+            text_search_store=fixture.text_search_store,
+        ),
+        gemini_generator=GeminiDocumentGenerator(
+            settings=GeminiGenerationSettings(
+                api_key="test-gemini-key",
+                model_name="gemini-test",
+                base_url="https://gemini.example.test/v1beta",
+            ),
+            transport=httpx.MockTransport(handler),
+        ),
+        settings=DocumentGenerationSettings(generation_provider="gemini"),
+    )
+
+    try:
+        response = await service.generate(
+            DocumentGenerationRequest(
+                session_id="doc-fact-finding-empty-section",
+                user_intent=DocumentIntent(doc_type="fact_summary"),
+                user_text=(
+                    "사건 제목: 창고 자산 반출 의혹 조사\n"
+                    "발생 일시: 2026-03-19T09:00:00+00:00\n"
+                    "발생 장소: 제3보급대대 창고동\n"
+                    "관련자: 병장 최민수\n"
+                    "사건 개요: 장비 상자 이동 정황이 확인되었다.\n"
+                    "상세 사실관계: 창고 출입기록과 CCTV 확인 결과 장비 상자 이동 정황이 확인되었다.\n"
+                ),
+                as_of_date=date(2026, 3, 19),
+                jurisdiction="kr",
+                constraints=DocumentConstraints(prompt_profile="fact_finding_report"),
+            ),
+            build_context(),
+        )
+    finally:
+        await service.aclose()
+
+    subject_profile = next(section for section in response.draft.sections if section.section_id == "subject_profile")
+    assert subject_profile.text.startswith("- 소속:")
+    assert "출력 형식" not in subject_profile.text
 
 
 def test_generate_document_endpoint_accepts_frontend_case_payload() -> None:

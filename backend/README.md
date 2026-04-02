@@ -61,14 +61,13 @@ Infrastructure Layer
 README에는 구조와 책임 분리를 요약하고, 실제 RAG/LLM 실행 순서는 별도 문서로 분리했다.
 
 - [`RAG_AND_DOCUMENT_PIPELINE.md`](./RAG_AND_DOCUMENT_PIPELINE.md)
-  - `CaseDocumentGenerationRequest -> DocumentGenerationRequest` 변환
-  - `StructuredCase` 생성과 clarify 분기
-  - hybrid retrieval, graph expansion, evaluator rerank
-  - `EvidencePack`, `DocumentPlan`, plan retrieval loop
-  - Gemini/heuristic merge, evaluator warning, evidence report
-  - `/services/documents/generate` 와 `/api/cases` 연결 방식
+  - 단계별로 "왜 이 단계가 필요한지"를 설명하는 추상화 문서
+  - RAG 파이프라인과 문서 생성 파이프라인의 역할 분리
+  - 전체 흐름, RAG 전용 흐름, 문서 생성 전용 흐름을 mermaid 그래프로 시각화
+  - grounded generation, 질문 루프, evaluator, fallback의 필요성 설명
+  - 마지막 절에서만 현재 코드 모듈과 개념 단계를 매핑
 
-문서 생성이 왜 특정 형식으로 나오는지, Gemini 실패 시 왜 fallback이 보이는지, 프론트에서 보는 `content`가 어떤 조립 단계를 거치는지 추적할 때는 위 문서를 먼저 보는 편이 빠르다.
+문서 생성이 왜 retrieval 이후에 와야 하는지, 왜 planner와 evaluator가 따로 필요한지, 왜 본문과 내부 진단 정보를 분리해야 하는지 설명할 때는 위 문서를 먼저 보는 편이 빠르다.
 
 ## 프론트 우선 API 설계
 
