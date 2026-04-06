@@ -7,7 +7,6 @@ from typing import AsyncIterator, Literal
 from documents.evaluation import DocumentDraftEvaluator
 from documents.evidence import EvidenceCollector
 from documents.gemini import GeminiDocumentGenerator, GeminiGeneratedSection
-from documents.generator import DocumentSectionGenerator
 from documents.planning import DocumentPlanner
 from schemas import (
     DocumentDraft,
@@ -15,10 +14,13 @@ from schemas import (
     DocumentGenerationResponse,
     DocumentPlan,
     DocumentStreamEvent,
+    EvidenceItem,
     EvidencePack,
     EvidenceReport,
+    EvidenceType,
     ObservationContext,
     SectionDraft,
+    SectionPlan,
 )
 from storage.observability import get_logger, log_info
 
@@ -118,7 +120,7 @@ def build_document_stream_error_event(error: Exception) -> DocumentStreamEvent:
 class DocumentGenerationSettings:
     operational_mode: bool = False
     enable_plan_retrieval_loop: bool = True
-    generation_provider: Literal["auto", "heuristic", "gemini"] = "auto"
+    generation_provider: Literal["gemini"] = "gemini"
 
 
 class DocumentGenerationService:
@@ -127,14 +129,12 @@ class DocumentGenerationService:
         evidence_collector: EvidenceCollector,
         *,
         planner: DocumentPlanner | None = None,
-        section_generator: DocumentSectionGenerator | None = None,
         gemini_generator: GeminiDocumentGenerator | None = None,
         evaluator: DocumentDraftEvaluator | None = None,
         settings: DocumentGenerationSettings | None = None,
     ) -> None:
         self.evidence_collector = evidence_collector
         self.planner = planner or DocumentPlanner()
-        self.section_generator = section_generator or DocumentSectionGenerator()
         self.gemini_generator = gemini_generator
         self.evaluator = evaluator or DocumentDraftEvaluator()
         self.settings = settings or DocumentGenerationSettings()
@@ -255,46 +255,19 @@ class DocumentGenerationService:
         plan: DocumentPlan,
         context: ObservationContext,
     ) -> list[SectionDraft]:
-        if self._should_use_gemini():
-            if self.gemini_generator is None or not self.gemini_generator.is_configured():
-                raise RuntimeError("Gemini document generation is enabled but GEMINI_API_KEY is not configured.")
-            try:
-                generated = await self.gemini_generator.generate_sections(request, evidence_pack, plan, context)
-            except Exception:
-                if self.settings.generation_provider == "gemini":
-                    raise
-                logger.warning(
-                    "gemini section generation failed; falling back to heuristic generation | request_id=%s doc_type=%s",
-                    context.request_id,
-                    request.user_intent.doc_type,
-                    exc_info=True,
-                )
-            else:
-                return self._merge_sections_with_heuristics(request, evidence_pack, plan, generated, context)
+        if self.gemini_generator is None or not self.gemini_generator.is_configured():
+            raise RuntimeError("Gemini document generation is enabled but GEMINI_API_KEY is not configured.")
+        generated = await self.gemini_generator.generate_sections(request, evidence_pack, plan, context)
+        return self._build_sections_from_gemini(request, evidence_pack, plan, generated)
 
-        return self._generate_sections_heuristically(request, evidence_pack, plan, context)
-
-    def _generate_sections_heuristically(
-        self,
-        request: DocumentGenerationRequest,
-        evidence_pack: EvidencePack,
-        plan: DocumentPlan,
-        context: ObservationContext,
-    ) -> list[SectionDraft]:
-        sections: list[SectionDraft] = []
-        for section_plan in plan.sections:
-            sections.append(self.section_generator.generate_section(request, evidence_pack, section_plan, sections, context))
-        return sections
-
-    def _merge_sections_with_heuristics(
+    def _build_sections_from_gemini(
         self,
         request: DocumentGenerationRequest,
         evidence_pack: EvidencePack,
         plan: DocumentPlan,
         generated_sections: list[GeminiGeneratedSection],
-        context: ObservationContext,
     ) -> list[SectionDraft]:
-        sections_by_id = {}
+        sections_by_id: dict[str, GeminiGeneratedSection] = {}
         for section in generated_sections:
             if section.section_id not in sections_by_id and section.text.strip():
                 sections_by_id[section.section_id] = section
@@ -302,45 +275,85 @@ class DocumentGenerationService:
         if not sections_by_id:
             raise RuntimeError("gemini generation returned no usable document sections")
 
-        merged_sections: list[SectionDraft] = []
+        missing_sections: list[str] = []
+        empty_sections: list[str] = []
+        finalized_sections: list[SectionDraft] = []
         for section_plan in plan.sections:
-            heuristic_section = self.section_generator.generate_section(
-                request,
-                evidence_pack,
-                section_plan,
-                merged_sections,
-                context,
-            )
             llm_section = sections_by_id.get(section_plan.section_id)
             if llm_section is None:
-                merged_sections.append(heuristic_section)
+                missing_sections.append(section_plan.section_id)
                 continue
-            merged_sections.append(
-                heuristic_section.model_copy(
-                    update={
-                        "text": self._normalize_generated_text(
-                            request,
-                            section_plan.section_id,
-                            section_plan.title,
-                            llm_section.text,
-                        )
-                        or heuristic_section.text,
-                        "open_issues": self._merge_open_issues(llm_section.open_issues, heuristic_section.open_issues),
-                    }
+            normalized_text = self._normalize_generated_text(
+                request,
+                section_plan.section_id,
+                section_plan.title,
+                llm_section.text,
+            )
+            if not normalized_text.strip():
+                empty_sections.append(section_plan.section_id)
+                continue
+            finalized_sections.append(
+                SectionDraft(
+                    section_id=section_plan.section_id,
+                    title=section_plan.title,
+                    text=normalized_text,
+                    citations=self._select_evidence_ids(section_plan, evidence_pack),
+                    open_issues=self._unique_strings(llm_section.open_issues),
                 )
             )
-        return merged_sections
 
-    def _merge_open_issues(self, llm_open_issues: list[str], heuristic_open_issues: list[str]) -> list[str]:
+        if missing_sections or empty_sections:
+            problems: list[str] = []
+            if missing_sections:
+                problems.append(f"누락 섹션: {', '.join(missing_sections)}")
+            if empty_sections:
+                problems.append(f"빈 섹션: {', '.join(empty_sections)}")
+            raise RuntimeError("gemini generation did not produce all required sections. " + " / ".join(problems))
+
+        return finalized_sections
+
+    def _unique_strings(self, values: list[str]) -> list[str]:
         merged: list[str] = []
         seen: set[str] = set()
-        for value in [*llm_open_issues, *heuristic_open_issues]:
+        for value in values:
             normalized = value.strip()
             if not normalized or normalized in seen:
                 continue
             seen.add(normalized)
             merged.append(normalized)
         return merged
+
+    def _select_evidence_ids(self, section_plan: SectionPlan, evidence_pack: EvidencePack) -> list[str]:
+        selected: list[EvidenceItem] = []
+        by_type = {
+            EvidenceType.LAW: evidence_pack.laws,
+            EvidenceType.CASE: evidence_pack.cases,
+            EvidenceType.REGULATION: evidence_pack.regulations,
+            EvidenceType.FORM: evidence_pack.forms,
+        }
+        for evidence_type in section_plan.required_evidence_types:
+            pool = by_type.get(evidence_type, [])
+            if pool:
+                selected.append(pool[0])
+
+        if section_plan.required_evidence_ids:
+            selected.extend(
+                item
+                for item in evidence_pack.all_items()
+                if item.evidence_id in section_plan.required_evidence_ids
+            )
+
+        if not selected:
+            selected = evidence_pack.all_items()[:2]
+
+        citations: list[str] = []
+        seen_ids: set[str] = set()
+        for item in selected:
+            if item.evidence_id in seen_ids:
+                continue
+            seen_ids.add(item.evidence_id)
+            citations.append(item.evidence_id)
+        return citations
 
     def _normalize_generated_text(
         self,
@@ -406,13 +419,6 @@ class DocumentGenerationService:
         if first_marker_position <= 0:
             return text
         return text[first_marker_position:]
-
-    def _should_use_gemini(self) -> bool:
-        if self.settings.generation_provider == "heuristic":
-            return False
-        if self.settings.generation_provider == "gemini":
-            return True
-        return self.gemini_generator is not None and self.gemini_generator.is_configured()
 
     def _build_response(
         self,

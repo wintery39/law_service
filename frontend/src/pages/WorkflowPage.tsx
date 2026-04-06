@@ -109,6 +109,11 @@ export default function WorkflowPage() {
                   <StatusBadge type="document" value={document.status} />
                 </div>
                 <p className="mt-2 text-sm leading-6 text-slate-600">{document.description}</p>
+                {document.activeChangeSet ? (
+                  <p className="mt-3 text-xs font-semibold uppercase tracking-[0.18em] text-amber-800">
+                    승인 대기 섹션 {document.activeChangeSet.patches.length}건
+                  </p>
+                ) : null}
               </div>
             ))}
           </div>

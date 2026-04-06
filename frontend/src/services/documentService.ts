@@ -9,4 +9,18 @@ export const documentService = {
     apiClient.post<DocumentDetail>(`/cases/${caseId}/documents/${documentId}/reviews`, { title, description }),
   resolveDocumentReview: (caseId: string, documentId: string, reviewId: string) =>
     apiClient.post<DocumentDetail>(`/cases/${caseId}/documents/${documentId}/reviews/${reviewId}/resolve`),
+  applyDocumentChangeSet: (
+    caseId: string,
+    documentId: string,
+    changeSetId: string,
+    approvedPatchIds: string[],
+    rejectedPatchIds: string[],
+  ) =>
+    apiClient.post<DocumentDetail>(
+      `/cases/${caseId}/documents/${documentId}/change-sets/${changeSetId}/apply`,
+      {
+        approvedPatchIds,
+        rejectedPatchIds,
+      },
+    ),
 };

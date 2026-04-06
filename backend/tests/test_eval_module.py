@@ -22,19 +22,13 @@ from eval import (
     load_gold_cases,
     render_text_report,
 )
+from tests.fake_gemini import build_fake_document_service
 from tests.test_related_article_service import build_context, seed_related_article_fixture
 
 
 def build_eval_runner() -> EvaluationRunner:
     fixture = seed_related_article_fixture()
-    document_service = DocumentGenerationService(
-        evidence_collector=EvidenceCollector(
-            related_articles_client=InProcessRelatedArticlesClient(fixture.service),
-            repository=fixture.repository,
-            text_search_store=fixture.text_search_store,
-        ),
-        settings=DocumentGenerationSettings(),
-    )
+    document_service = build_fake_document_service(fixture.service, fixture.repository, fixture.text_search_store)
     retrieval_eval = RetrievalEvalService(
         repository=fixture.repository,
         graph_store=fixture.graph_store,
@@ -162,14 +156,7 @@ async def test_eval_quality_gate(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_generation_eval_uses_final_generation_evidence_pack() -> None:
     fixture = seed_related_article_fixture()
-    document_service = DocumentGenerationService(
-        evidence_collector=EvidenceCollector(
-            related_articles_client=InProcessRelatedArticlesClient(fixture.service),
-            repository=fixture.repository,
-            text_search_store=fixture.text_search_store,
-        ),
-        settings=DocumentGenerationSettings(),
-    )
+    document_service = build_fake_document_service(fixture.service, fixture.repository, fixture.text_search_store)
     generation_eval = GenerationEvalService(document_service, judge=HeuristicJudgeScorer())
 
     report, artifacts = await generation_eval.evaluate(

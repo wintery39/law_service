@@ -12,6 +12,7 @@ from case_management import (
     CaseDetail,
     CaseSummary,
     DashboardMetrics,
+    DocumentChangeSetApplyPayload,
     DocumentDetail,
     DocumentReviewCreatePayload,
     DocumentRecord,
@@ -105,7 +106,7 @@ class ServiceContainer:
                 text_search_store=self.text_search_store,
             ),
             gemini_generator=GeminiDocumentGenerator(settings=GeminiGenerationSettings()),
-            settings=DocumentGenerationSettings(),
+            settings=DocumentGenerationSettings(generation_provider="gemini"),
         )
         self.case_management_service = CaseWorkflowService(
             document_generation_service=self.document_generation_service,
@@ -190,6 +191,8 @@ async def create_case(payload: CaseCreatePayload) -> CaseDetail:
         return await container.case_management_service.create_case(payload)
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
 
 
 @app.get("/api/cases/{case_id}/documents", response_model=list[DocumentRecord])
@@ -215,7 +218,7 @@ async def submit_document_review(
     payload: DocumentReviewCreatePayload,
 ) -> DocumentDetail:
     try:
-        return container.case_management_service.submit_document_review(
+        return await container.case_management_service.submit_document_review(
             case_id,
             document_id,
             payload.title,
@@ -225,6 +228,8 @@ async def submit_document_review(
         raise HTTPException(status_code=404, detail=str(error)) from error
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
 
 
 @app.post(
@@ -234,6 +239,32 @@ async def submit_document_review(
 async def resolve_document_review(case_id: str, document_id: str, review_id: str) -> DocumentDetail:
     try:
         return container.case_management_service.resolve_document_review(case_id, document_id, review_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@app.post(
+    "/api/cases/{case_id}/documents/{document_id}/change-sets/{change_set_id}/apply",
+    response_model=DocumentDetail,
+)
+async def apply_document_change_set(
+    case_id: str,
+    document_id: str,
+    change_set_id: str,
+    payload: DocumentChangeSetApplyPayload,
+) -> DocumentDetail:
+    try:
+        return container.case_management_service.apply_document_change_set(
+            case_id,
+            document_id,
+            change_set_id,
+            payload.approvedPatchIds,
+            payload.rejectedPatchIds,
+        )
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except ValueError as error:
@@ -259,11 +290,13 @@ async def get_open_questions(case_id: str) -> list[QuestionRecord]:
 @app.post("/api/questions/{question_id}/answer", response_model=CaseDetail)
 async def answer_question(question_id: str, payload: QuestionAnswerPayload) -> CaseDetail:
     try:
-        return container.case_management_service.submit_question_answer(question_id, payload.answer)
+        return await container.case_management_service.submit_question_answer(question_id, payload.answer)
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
 
 
 @app.get("/api/legal-basis", response_model=list[LegalBasisEntry])

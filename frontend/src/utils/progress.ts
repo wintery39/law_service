@@ -5,6 +5,7 @@ const DOCUMENT_STATUS_SCORE: Record<DocumentStatus, number> = {
   pending: 18,
   generating: 58,
   needs_input: 46,
+  pending_approval: 82,
   completed: 100,
 };
 
@@ -67,6 +68,9 @@ export function buildWorkflowStages(caseDetail: CaseDetail): WorkflowStage[] {
   const documentsNeedingInput = caseDetail.documents.filter((document) => document.status === 'needs_input').length;
   const generatingDocuments = caseDetail.documents.filter((document) => document.status === 'generating').length;
   const pendingDocuments = caseDetail.documents.filter((document) => document.status === 'pending').length;
+  const pendingApprovalDocuments = caseDetail.documents.filter(
+    (document) => document.status === 'pending_approval',
+  ).length;
   const reviewItems = caseDetail.documents.flatMap((document) => document.reviewHistory);
   const openReviews = reviewItems.filter((item) => item.status === 'open').length;
   const resolvedReviews = reviewItems.filter((item) => item.status === 'resolved').length;
@@ -108,14 +112,12 @@ export function buildWorkflowStages(caseDetail: CaseDetail): WorkflowStage[] {
     {
       id: 'document_generation',
       ...WORKFLOW_STAGE_META.document_generation,
-      detail: openReviews > 0 && draftsPrepared
-        ? `${caseDetail.documents.length}개 문서 초안이 준비되었고, 현재 ${openReviews}건의 피드백 반영이 진행 중입니다.`
+      detail: (openReviews > 0 || pendingApprovalDocuments > 0) && draftsPrepared
+        ? `${caseDetail.documents.length}개 문서 초안이 준비되었고, 현재 ${pendingApprovalDocuments}개의 승인 대기 수정안과 ${openReviews}건의 피드백이 있습니다.`
         : documentsCompleted
           ? `${caseDetail.documents.length}개의 문서가 모두 생성 완료되었습니다.`
-          : `${caseDetail.documents.length}개 문서 중 ${generatingDocuments}개 작성 중, ${pendingDocuments}개 대기, ${documentsNeedingInput}개 추가 정보 필요 상태입니다.`,
-      status: openReviews > 0 && draftsPrepared
-        ? 'completed'
-        : documentsCompleted
+          : `${caseDetail.documents.length}개 문서 중 ${generatingDocuments}개 작성 중, ${pendingApprovalDocuments}개 승인 대기, ${pendingDocuments}개 대기, ${documentsNeedingInput}개 추가 정보 필요 상태입니다.`,
+      status: documentsCompleted
           ? 'completed'
           : caseDetail.documents.length === 0 || openQuestions.length > 0 || documentsNeedingInput > 0
             ? 'pending'
@@ -124,14 +126,19 @@ export function buildWorkflowStages(caseDetail: CaseDetail): WorkflowStage[] {
     {
       id: 'review_feedback',
       ...WORKFLOW_STAGE_META.review_feedback,
-      detail: openReviews > 0
-        ? `${openReviews}건의 검토 요청이 열려 있으며, 사용자 피드백 반영이 필요합니다.`
+      detail: pendingApprovalDocuments > 0 || openReviews > 0
+        ? `${pendingApprovalDocuments}개의 승인 대기 수정안과 ${openReviews}건의 검토 요청이 열려 있습니다.`
         : !documentsCompleted && !hasReviewHistory
           ? '문서 생성이 완료되면 검토와 피드백 반영 단계로 넘어갑니다.'
           : hasReviewHistory
             ? `${resolvedReviews}건의 검토 이력이 정리되었고 현재 열린 피드백은 없습니다.`
             : '검토 요청 없이 문서 패키지가 마무리되었습니다.',
-      status: openReviews > 0 ? 'active' : !documentsCompleted && !hasReviewHistory ? 'pending' : 'completed',
+      status:
+        pendingApprovalDocuments > 0 || openReviews > 0
+          ? 'active'
+          : !documentsCompleted && !hasReviewHistory
+            ? 'pending'
+            : 'completed',
     },
   ];
 }

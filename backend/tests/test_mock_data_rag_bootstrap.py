@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from main import app, container
 from schemas import CaseDocumentGenerationRequest, ObservationContext, build_document_generation_request
+from tests.fake_gemini import build_fake_document_service
 
 
 def test_mock_data_status_endpoint_reports_loaded_demo_corpus() -> None:
@@ -61,14 +62,23 @@ async def test_document_generation_collects_mock_data_as_evidence() -> None:
         )
     )
 
-    response, evidence_pack = await container.document_generation_service.generate_with_artifacts(
-        request,
-        ObservationContext(
-            request_id="mock-data-doc-generation",
-            corpus_version="mock-data",
-            ingestion_run_id="mock-data-doc-generation",
-        ),
+    service = build_fake_document_service(
+        container.related_article_service,
+        container.repository,
+        container.text_search_store,
     )
+
+    try:
+        response, evidence_pack = await service.generate_with_artifacts(
+            request,
+            ObservationContext(
+                request_id="mock-data-doc-generation",
+                corpus_version="mock-data",
+                ingestion_run_id="mock-data-doc-generation",
+            ),
+        )
+    finally:
+        await service.aclose()
 
     assert response.evidence_report.totals_by_type["regulation"] >= 1 or response.evidence_report.totals_by_type["law"] >= 1
     assert any(item.title.startswith("군인 징계령 시행규칙") for item in evidence_pack.laws + evidence_pack.regulations)

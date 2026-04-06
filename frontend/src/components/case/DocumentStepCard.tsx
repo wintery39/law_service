@@ -37,6 +37,14 @@ export function DocumentStepCard({ caseId, document, legalSummary }: DocumentSte
           ))}
         </div>
       </div>
+      {document.activeChangeSet ? (
+        <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-800">승인 대기 수정안</p>
+          <p className="mt-2 text-sm leading-6 text-amber-900">
+            변경 섹션 {document.activeChangeSet.patches.length}건이 준비되어 있습니다.
+          </p>
+        </div>
+      ) : null}
       <div className="mt-4 flex justify-end">
         <Link
           to={`/cases/${caseId}/documents/${document.id}`}

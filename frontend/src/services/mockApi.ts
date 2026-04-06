@@ -7,7 +7,14 @@ import { buildWorkflowStages, calculateMetrics, calculateProgressByDocuments } f
 import { DISCIPLINARY_DOCUMENT_CATALOG } from '../utils/documentCatalog';
 import type { CaseCreatePayload, CaseDetail, CaseSummary, TimelineEvent, WorkflowStageId } from '../types/case';
 import type { CaseStatus, DashboardMetrics, DocumentStatus } from '../types/common';
-import type { DocumentDetail, DocumentRecord } from '../types/document';
+import type {
+  ChangeSetSource,
+  DocumentBody,
+  DocumentChangeSet,
+  DocumentDetail,
+  DocumentPatch,
+  DocumentRecord,
+} from '../types/document';
 import type { LegalBasisEntry } from '../types/legalBasis';
 import type { QuestionRecord } from '../types/question';
 
@@ -141,6 +148,17 @@ function getQuestionsForCase(caseId: string) {
     .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
 }
 
+function getDependentDocuments(caseId: string, documentId: string) {
+  const documents = getDocumentsForCase(caseId);
+  const source = documents.find((item) => item.id === documentId);
+
+  if (!source) {
+    return [];
+  }
+
+  return documents.filter((item) => item.order >= source.order);
+}
+
 function getDocumentStatusProgress(documents: DocumentRecord[]) {
   return calculateProgressByDocuments(documents.map((document) => document.status));
 }
@@ -269,7 +287,10 @@ function syncCaseSummary(caseId: string) {
 
 function hydrateCaseDetail(caseId: string): CaseDetail {
   const { summary, detail } = ensureCase(caseId);
-  const documents = getDocumentsForCase(caseId);
+  const documents = getDocumentsForCase(caseId).map((document) => {
+    ensureApprovedBody(document);
+    return document;
+  });
   const questions = getQuestionsForCase(caseId);
   const hydratedDetail: CaseDetail = {
     ...detail,
@@ -296,6 +317,8 @@ function buildDocumentDetail(caseId: string, documentId: string): DocumentDetail
     throw new Error('문서 정보를 찾을 수 없습니다.');
   }
 
+  ensureApprovedBody(document);
+
   const documents = getDocumentsForCase(caseId);
   const index = documents.findIndex((item) => item.id === documentId);
 
@@ -303,9 +326,144 @@ function buildDocumentDetail(caseId: string, documentId: string): DocumentDetail
     ...document,
     legalBasis: database.legalBasis.filter((item) => document.legalBasisIds.includes(item.id)),
     questions: getQuestionsForCase(caseId).filter((item) => item.documentId === documentId),
+    changeSetHistorySummary: document.changeSetHistory ?? [],
     previousDocumentId: index > 0 ? documents[index - 1].id : undefined,
     nextDocumentId: index < documents.length - 1 ? documents[index + 1].id : undefined,
   };
+}
+
+function buildDocumentBody(content: string, title: string): DocumentBody {
+  const compiledText = content.trim();
+
+  if (!compiledText) {
+    return {
+      sections: [],
+      compiledText: '',
+    };
+  }
+
+  return {
+    sections: [
+      {
+        id: 'body',
+        title,
+        paragraphs: [
+          {
+            id: 'body-p1',
+            text: compiledText,
+          },
+        ],
+      },
+    ],
+    compiledText,
+  };
+}
+
+function ensureApprovedBody(document: DocumentRecord) {
+  if (!document.approvedBody) {
+    document.approvedBody = buildDocumentBody(document.content, document.title);
+  }
+
+  if (!document.changeSetHistory) {
+    document.changeSetHistory = [];
+  }
+}
+
+function deriveDocumentStatus(caseId: string, document: DocumentRecord): DocumentStatus {
+  const hasOpenQuestions = getQuestionsForCase(caseId).some(
+    (item) => item.documentId === document.id && item.status === 'open',
+  );
+
+  if (hasOpenQuestions) {
+    return 'needs_input';
+  }
+
+  if (document.activeChangeSet) {
+    return 'pending_approval';
+  }
+
+  if (document.reviewHistory.some((item) => item.status === 'open')) {
+    return 'generating';
+  }
+
+  return document.content.trim() ? 'completed' : 'pending';
+}
+
+function buildSuggestedContent(document: DocumentRecord, heading: string, detail: string) {
+  const base = document.approvedBody?.compiledText || document.content;
+  return `${base}\n\n${heading}\n${detail.trim()}`.trim();
+}
+
+function createChangeSet(
+  caseId: string,
+  document: DocumentRecord,
+  {
+    source,
+    title,
+    description,
+    proposedContent,
+    createdAt,
+    relatedReviewId,
+    relatedQuestionId,
+  }: {
+    source: ChangeSetSource;
+    title: string;
+    description: string;
+    proposedContent: string;
+    createdAt: string;
+    relatedReviewId?: string;
+    relatedQuestionId?: string;
+  },
+) {
+  ensureApprovedBody(document);
+
+  if (document.activeChangeSet) {
+    document.changeSetHistory!.unshift({
+      ...document.activeChangeSet,
+      status: 'superseded',
+      appliedAt: createdAt,
+    });
+    document.activeChangeSet = null;
+  }
+
+  const originalText = document.approvedBody?.compiledText || document.content;
+  if (originalText.trim() === proposedContent.trim()) {
+    document.status = deriveDocumentStatus(caseId, document);
+    document.updatedAt = createdAt;
+    return null;
+  }
+
+  const patch: DocumentPatch = {
+    id: `patch-${Math.random().toString(36).slice(2, 10)}`,
+    sectionId: 'body',
+    sectionTitle: document.title,
+    originalSectionTitle: document.title,
+    sectionOrder: 0,
+    paragraphId: 'body-p1',
+    changeType: originalText.trim() ? 'modify' : 'add',
+    originalText,
+    proposedText: proposedContent,
+    decision: 'rejected',
+  };
+
+  const changeSet: DocumentChangeSet = {
+    id: `${document.id}-changeset-${Math.random().toString(36).slice(2, 10)}`,
+    source,
+    title,
+    description,
+    createdAt,
+    baseVersion: document.versionHistory[0]?.version ?? 'v0.0',
+    status: 'pending',
+    patches: [patch],
+    relatedReviewId,
+    relatedQuestionId,
+    appliedAt: null,
+  };
+
+  document.activeChangeSet = changeSet;
+  document.status = deriveDocumentStatus(caseId, document);
+  document.updatedAt = createdAt;
+  return changeSet;
 }
 
 function buildDocumentTemplates(payload: CaseCreatePayload, caseId: string) {
@@ -357,6 +515,9 @@ function buildDocumentTemplates(payload: CaseCreatePayload, caseId: string) {
     status: template.status,
     description: template.description,
     content: template.content,
+    approvedBody: buildDocumentBody(template.content, template.title),
+    activeChangeSet: null,
+    changeSetHistory: [],
     legalBasisIds: template.legalBasisIds,
     versionHistory: [
       {
@@ -491,16 +652,23 @@ export const mockApi = {
       }
 
       const now = new Date().toISOString();
+      const reviewId = `${document.id}-review-${Date.now()}`;
 
       document.reviewHistory.unshift({
-        id: `${document.id}-review-${Date.now()}`,
+        id: reviewId,
         title: title.trim(),
         description: description.trim(),
         createdAt: now,
         status: 'open',
       });
-      document.status = document.status === 'needs_input' ? 'needs_input' : 'generating';
-      document.updatedAt = now;
+      createChangeSet(caseId, document, {
+        source: 'review_feedback',
+        title: `${title.trim()} 수정안`,
+        description: description.trim(),
+        proposedContent: buildSuggestedContent(document, '[피드백 반영 제안]', description),
+        createdAt: now,
+        relatedReviewId: reviewId,
+      });
 
       appendTimelineEvent(caseId, {
         id: `${caseId}-timeline-${Date.now()}`,
@@ -537,30 +705,24 @@ export const mockApi = {
         throw new Error('이미 반영 완료된 피드백입니다.');
       }
 
+      if (document.activeChangeSet) {
+        throw new Error('승인 대기 중인 수정안이 있어 피드백을 바로 종료할 수 없습니다.');
+      }
+
       const now = new Date().toISOString();
 
       review.status = 'resolved';
-      const hasRemainingOpenReviews = document.reviewHistory.some((item) => item.id !== reviewId && item.status === 'open');
-      const hasOpenQuestions = getQuestionsForCase(caseId).some(
-        (item) => item.documentId === documentId && item.status === 'open',
-      );
-
-      document.status = hasOpenQuestions ? 'needs_input' : hasRemainingOpenReviews ? 'generating' : 'completed';
+      document.status = deriveDocumentStatus(caseId, document);
       document.updatedAt = now;
-      document.versionHistory.unshift({
-        version: `v${document.versionHistory.length + 1}.0`,
-        updatedAt: now,
-        note: `${review.title} 피드백을 반영해 문서를 수정했습니다.`,
-      });
 
       appendTimelineEvent(caseId, {
         id: `${caseId}-timeline-${Date.now()}`,
         stageId: 'review_feedback',
         type: 'review_completed',
-        title: '문서 피드백 반영 완료',
-        description: `${document.title} 문서에 대한 사용자 피드백이 반영되었습니다.`,
+        title: '문서 피드백 종료',
+        description: `${document.title} 문서 피드백 요청이 종료되었습니다.`,
         occurredAt: now,
-        actor: '문서 생성 엔진',
+        actor: '사용자',
         relatedDocumentId: documentId,
       });
 
@@ -583,31 +745,24 @@ export const mockApi = {
       const question = ensureQuestion(questionId);
       const now = new Date().toISOString();
 
+      if (question.status === 'answered') {
+        throw new Error('이미 답변이 제출된 질문입니다.');
+      }
+
       question.status = 'answered';
       question.answer = answer;
       question.answeredAt = now;
 
-      const document = database.documents.find((item) => item.id === question.documentId);
-
-      if (document) {
-        const nextStatus: DocumentStatus =
-          document.status === 'needs_input' ? 'generating' : document.status;
-
-        document.status = nextStatus;
-        document.updatedAt = now;
-        document.versionHistory.unshift({
-          version: `v${document.versionHistory.length + 1}.0`,
-          updatedAt: now,
-          note: '추가 질문 답변이 반영되어 초안이 갱신되었습니다.',
-        });
-        document.reviewHistory.unshift({
-          id: `${document.id}-review-${Date.now()}`,
-          title: '질문 답변 반영',
-          description: '사용자 입력을 반영해 문서 상태를 갱신했습니다.',
+      getDependentDocuments(question.caseId, question.documentId).forEach((document) => {
+        createChangeSet(question.caseId, document, {
+          source: 'question_answer',
+          title: `${question.title} 반영 수정안`,
+          description: '사용자 답변을 반영한 문서 수정안입니다.',
+          proposedContent: buildSuggestedContent(document, '[추가 답변 반영]', answer),
           createdAt: now,
-          status: 'resolved',
+          relatedQuestionId: question.id,
         });
-      }
+      });
 
       appendTimelineEvent(question.caseId, {
         id: `${question.caseId}-timeline-${Date.now()}`,
@@ -624,6 +779,89 @@ export const mockApi = {
       syncCaseSummary(question.caseId);
 
       return hydrateCaseDetail(question.caseId);
+    });
+  },
+
+  async applyDocumentChangeSet(
+    caseId: string,
+    documentId: string,
+    changeSetId: string,
+    approvedPatchIds: string[],
+    rejectedPatchIds: string[],
+  ) {
+    return simulate(() => {
+      const document = getDocumentsForCase(caseId).find((item) => item.id === documentId);
+
+      if (!document || !document.activeChangeSet || document.activeChangeSet.id !== changeSetId) {
+        throw new Error('승인 대기 중인 수정안을 찾을 수 없습니다.');
+      }
+
+      const approvedIds = new Set(approvedPatchIds);
+      const rejectedIds = new Set(rejectedPatchIds);
+
+      if ([...approvedIds].some((id) => rejectedIds.has(id))) {
+        throw new Error('같은 섹션을 동시에 승인과 거절로 선택할 수 없습니다.');
+      }
+
+      const changeSetPatchIds = document.activeChangeSet.patches.map((patch) => patch.id);
+
+      if (changeSetPatchIds.length !== approvedIds.size + rejectedIds.size) {
+        throw new Error('모든 변경 섹션에 대해 승인 또는 거절 결정을 내려야 합니다.');
+      }
+
+      const now = new Date().toISOString();
+      const resolvedPatches: DocumentPatch[] = document.activeChangeSet.patches.map((patch) => ({
+        ...patch,
+        decision: approvedIds.has(patch.id) ? 'approved' : 'rejected',
+      }));
+      const resolvedChangeSet: DocumentChangeSet = {
+        ...document.activeChangeSet,
+        patches: resolvedPatches,
+        status: approvedIds.size > 0 ? 'applied' : 'rejected',
+        appliedAt: now,
+      };
+
+      ensureApprovedBody(document);
+      if (approvedIds.size > 0) {
+        const approvedPatch = resolvedPatches.find((patch) => patch.decision === 'approved');
+        const nextContent = approvedPatch?.proposedText ?? document.content;
+        document.approvedBody = buildDocumentBody(nextContent, document.title);
+        document.content = nextContent;
+        document.versionHistory.unshift({
+          version: `v${document.versionHistory.length + 1}.0`,
+          updatedAt: now,
+          note: `${resolvedChangeSet.title}에서 승인된 섹션 ${approvedIds.size}건을 공식 본문에 반영했습니다.`,
+        });
+      }
+
+      document.changeSetHistory!.unshift(resolvedChangeSet);
+      document.activeChangeSet = null;
+      if (resolvedChangeSet.relatedReviewId) {
+        const review = document.reviewHistory.find((item) => item.id === resolvedChangeSet.relatedReviewId);
+        if (review) {
+          review.status = 'resolved';
+        }
+      }
+      document.status = deriveDocumentStatus(caseId, document);
+      document.updatedAt = now;
+
+      appendTimelineEvent(caseId, {
+        id: `${caseId}-timeline-${Date.now()}`,
+        stageId: 'review_feedback',
+        type: 'review_completed',
+        title: '문서 수정안 검토 완료',
+        description:
+          approvedIds.size > 0
+            ? `${document.title} 문서의 승인 대기 수정안이 공식 본문에 반영되었습니다.`
+            : `${document.title} 문서의 승인 대기 수정안이 모두 거절되었습니다.`,
+        occurredAt: now,
+        actor: '사용자',
+        relatedDocumentId: documentId,
+      });
+
+      syncCaseSummary(caseId);
+
+      return buildDocumentDetail(caseId, documentId);
     });
   },
 

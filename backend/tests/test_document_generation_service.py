@@ -18,19 +18,13 @@ from documents import (
 )
 from main import app, container
 from schemas import DocumentConstraints, DocumentGenerationRequest, DocumentIntent
+from tests.fake_gemini import build_fake_document_service
 from tests.test_related_article_service import build_context, seed_related_article_fixture
 
 
 def build_document_service() -> DocumentGenerationService:
     fixture = seed_related_article_fixture()
-    return DocumentGenerationService(
-        evidence_collector=EvidenceCollector(
-            related_articles_client=InProcessRelatedArticlesClient(fixture.service),
-            repository=fixture.repository,
-            text_search_store=fixture.text_search_store,
-        ),
-        settings=DocumentGenerationSettings(),
-    )
+    return build_fake_document_service(fixture.service, fixture.repository, fixture.text_search_store)
 
 
 async def test_generate_fact_summary_document() -> None:
@@ -521,7 +515,7 @@ async def test_generate_fact_finding_report_retries_invalid_json_and_normalizes_
     assert "\n- 각 증거로 확인되는 내용:" in evidence_summary.text
 
 
-async def test_generate_fact_finding_report_falls_back_to_heuristic_when_cleaned_section_is_empty() -> None:
+async def test_generate_fact_finding_report_fails_when_required_section_is_empty_after_normalization() -> None:
     fixture = seed_related_article_fixture()
 
     generated = {
@@ -599,42 +593,32 @@ async def test_generate_fact_finding_report_falls_back_to_heuristic_when_cleaned
     )
 
     try:
-        response = await service.generate(
-            DocumentGenerationRequest(
-                session_id="doc-fact-finding-empty-section",
-                user_intent=DocumentIntent(doc_type="fact_summary"),
-                user_text=(
-                    "사건 제목: 창고 자산 반출 의혹 조사\n"
-                    "발생 일시: 2026-03-19T09:00:00+00:00\n"
-                    "발생 장소: 제3보급대대 창고동\n"
-                    "관련자: 병장 최민수\n"
-                    "사건 개요: 장비 상자 이동 정황이 확인되었다.\n"
-                    "상세 사실관계: 창고 출입기록과 CCTV 확인 결과 장비 상자 이동 정황이 확인되었다.\n"
+        with pytest.raises(RuntimeError, match="빈 섹션: subject_profile"):
+            await service.generate(
+                DocumentGenerationRequest(
+                    session_id="doc-fact-finding-empty-section",
+                    user_intent=DocumentIntent(doc_type="fact_summary"),
+                    user_text=(
+                        "사건 제목: 창고 자산 반출 의혹 조사\n"
+                        "발생 일시: 2026-03-19T09:00:00+00:00\n"
+                        "발생 장소: 제3보급대대 창고동\n"
+                        "관련자: 병장 최민수\n"
+                        "사건 개요: 장비 상자 이동 정황이 확인되었다.\n"
+                        "상세 사실관계: 창고 출입기록과 CCTV 확인 결과 장비 상자 이동 정황이 확인되었다.\n"
+                    ),
+                    as_of_date=date(2026, 3, 19),
+                    jurisdiction="kr",
+                    constraints=DocumentConstraints(prompt_profile="fact_finding_report"),
                 ),
-                as_of_date=date(2026, 3, 19),
-                jurisdiction="kr",
-                constraints=DocumentConstraints(prompt_profile="fact_finding_report"),
-            ),
-            build_context(),
-        )
+                build_context(),
+            )
     finally:
         await service.aclose()
-
-    subject_profile = next(section for section in response.draft.sections if section.section_id == "subject_profile")
-    assert subject_profile.text.startswith("- 소속:")
-    assert "출력 형식" not in subject_profile.text
 
 
 def test_generate_document_endpoint_accepts_frontend_case_payload() -> None:
     fixture = seed_related_article_fixture()
-    document_service = DocumentGenerationService(
-        evidence_collector=EvidenceCollector(
-            related_articles_client=InProcessRelatedArticlesClient(fixture.service),
-            repository=fixture.repository,
-            text_search_store=fixture.text_search_store,
-        ),
-        settings=DocumentGenerationSettings(),
-    )
+    document_service = build_fake_document_service(fixture.service, fixture.repository, fixture.text_search_store)
     original_service = container.document_generation_service
     container.document_generation_service = document_service
 
@@ -670,14 +654,7 @@ def test_generate_document_endpoint_accepts_frontend_case_payload() -> None:
 
 def test_document_generation_stream_endpoint() -> None:
     fixture = seed_related_article_fixture()
-    document_service = DocumentGenerationService(
-        evidence_collector=EvidenceCollector(
-            related_articles_client=InProcessRelatedArticlesClient(fixture.service),
-            repository=fixture.repository,
-            text_search_store=fixture.text_search_store,
-        ),
-        settings=DocumentGenerationSettings(),
-    )
+    document_service = build_fake_document_service(fixture.service, fixture.repository, fixture.text_search_store)
     original_service = container.document_generation_service
     container.document_generation_service = document_service
 

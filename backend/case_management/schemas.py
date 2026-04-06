@@ -9,9 +9,13 @@ from schemas.common import CanonicalBaseModel
 
 CaseType = Literal["criminal", "disciplinary", "other"]
 CaseStatus = Literal["draft", "in_progress", "waiting_for_input", "completed"]
-DocumentStatus = Literal["pending", "generating", "needs_input", "completed"]
+DocumentStatus = Literal["pending", "generating", "needs_input", "pending_approval", "completed"]
 QuestionStatus = Literal["open", "answered"]
 PriorityLevel = Literal["critical", "high", "medium", "low"]
+ChangeSetSource = Literal["initial_generation", "question_answer", "review_feedback"]
+ChangeSetStatus = Literal["pending", "applied", "rejected", "superseded"]
+PatchDecision = Literal["pending", "approved", "rejected"]
+PatchChangeType = Literal["add", "modify", "remove"]
 WorkflowStageId = Literal[
     "case_registration",
     "attachment_registration",
@@ -80,6 +84,49 @@ class DocumentVersion(CanonicalBaseModel):
     note: str
 
 
+class DocumentParagraph(CanonicalBaseModel):
+    id: str
+    text: str
+
+
+class DocumentSection(CanonicalBaseModel):
+    id: str
+    title: str
+    paragraphs: list[DocumentParagraph]
+
+
+class DocumentBody(CanonicalBaseModel):
+    sections: list[DocumentSection]
+    compiledText: str
+
+
+class DocumentPatch(CanonicalBaseModel):
+    id: str
+    sectionId: str
+    sectionTitle: str
+    originalSectionTitle: str | None = None
+    sectionOrder: int = 0
+    paragraphId: str
+    changeType: PatchChangeType
+    originalText: str
+    proposedText: str
+    decision: PatchDecision = "rejected"
+
+
+class DocumentChangeSet(CanonicalBaseModel):
+    id: str
+    source: ChangeSetSource
+    title: str
+    description: str
+    createdAt: str
+    baseVersion: str
+    status: ChangeSetStatus = "pending"
+    patches: list[DocumentPatch]
+    relatedReviewId: str | None = None
+    relatedQuestionId: str | None = None
+    appliedAt: str | None = None
+
+
 class DocumentReviewHistory(CanonicalBaseModel):
     id: str
     title: str
@@ -97,6 +144,9 @@ class DocumentRecord(CanonicalBaseModel):
     status: DocumentStatus
     description: str
     content: str
+    approvedBody: DocumentBody | None = None
+    activeChangeSet: DocumentChangeSet | None = None
+    changeSetHistory: list[DocumentChangeSet] = Field(default_factory=list)
     legalBasisIds: list[str]
     versionHistory: list[DocumentVersion]
     reviewHistory: list[DocumentReviewHistory]
@@ -205,6 +255,7 @@ class CaseCreatePayload(CanonicalBaseModel):
 class DocumentDetail(DocumentRecord):
     legalBasis: list[LegalBasisEntry]
     questions: list[QuestionRecord]
+    changeSetHistorySummary: list[DocumentChangeSet] = Field(default_factory=list)
     previousDocumentId: str | None = None
     nextDocumentId: str | None = None
 
@@ -239,3 +290,16 @@ class QuestionAnswerPayload(CanonicalBaseModel):
         if not text:
             raise ValueError("answer must not be blank")
         return text
+
+
+class DocumentChangeSetApplyPayload(CanonicalBaseModel):
+    approvedPatchIds: list[str]
+    rejectedPatchIds: list[str]
+
+    @field_validator("approvedPatchIds", "rejectedPatchIds", mode="after")
+    @classmethod
+    def _dedupe_patch_ids(cls, value: list[str]) -> list[str]:
+        normalized = [item.strip() for item in value if item.strip()]
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("patch ids must be unique")
+        return normalized

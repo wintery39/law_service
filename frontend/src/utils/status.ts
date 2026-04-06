@@ -71,6 +71,11 @@ export const DOCUMENT_STATUS_META: Record<
     className: 'bg-orange-50 text-orange-700 ring-orange-200',
     dotClassName: 'bg-orange-500',
   },
+  pending_approval: {
+    label: '승인 대기',
+    className: 'bg-amber-50 text-amber-800 ring-amber-200',
+    dotClassName: 'bg-amber-500',
+  },
   completed: {
     label: '완료',
     className: 'bg-emerald-50 text-emerald-700 ring-emerald-200',

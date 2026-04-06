@@ -6,21 +6,27 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 import json
 from pathlib import Path
+import re
 from threading import RLock
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from case_management.legal_basis import DisciplinaryLegalBasisCatalog
-from documents.generator import COMMON_RANK_TOKENS
 from case_management.schemas import (
     CaseCreatePayload,
     CaseDetail,
     CaseStatus,
     CaseSummary,
+    ChangeSetSource,
     DashboardMetrics,
+    DocumentBody,
+    DocumentChangeSet,
     DocumentDetail,
+    DocumentParagraph,
+    DocumentPatch,
     DocumentRecord,
     DocumentReviewHistory,
+    DocumentSection,
     DocumentStatus,
     DocumentVersion,
     LegalBasisEntry,
@@ -48,7 +54,63 @@ DOCUMENT_STATUS_SCORE: dict[DocumentStatus, int] = {
     "pending": 18,
     "generating": 58,
     "needs_input": 46,
+    "pending_approval": 82,
     "completed": 100,
+}
+SECTION_HEADING_RE = re.compile(r"^(?P<number>\d+)\.\s+(?P<title>.+)$")
+BRACKET_SECTION_RE = re.compile(r"^\[(?P<title>.+)\]$")
+PARAGRAPH_START_RE = re.compile(r"^(?:- |\d+\. |\[[^\]]+\]|[가-하]\.\s*)")
+COMMON_RANK_TOKENS = {
+    "이병",
+    "일병",
+    "상병",
+    "병장",
+    "하사",
+    "중사",
+    "상사",
+    "원사",
+    "준위",
+    "소위",
+    "중위",
+    "대위",
+    "소령",
+    "중령",
+    "대령",
+    "준장",
+    "소장",
+    "중장",
+    "대장",
+    "원수",
+    "사원",
+    "주임",
+    "대리",
+    "과장",
+    "차장",
+    "부장",
+    "실장",
+    "팀장",
+    "주무관",
+    "서기",
+    "주사",
+    "주사보",
+    "사무관",
+    "서기관",
+    "부이사관",
+    "이사관",
+    "관리관",
+    "연구사",
+    "연구관",
+    "교사",
+    "교감",
+    "교장",
+    "경위",
+    "경감",
+    "경정",
+    "총경",
+    "경무관",
+    "치안감",
+    "치안정감",
+    "치안총감",
 }
 WORKFLOW_STAGE_META: dict[WorkflowStageId, dict[str, str]] = {
     "case_registration": {
@@ -124,6 +186,40 @@ STRUCTURED_RENDER_PROMPT_PROFILES = {
     "committee_reference",
     "attendance_notice",
     "disciplinary_resolution",
+}
+DOCUMENT_PIPELINE_SPECS: dict[str, dict[str, object]] = {
+    "fact_finding_report": {
+        "pipeline_doc_type": "fact_summary",
+        "prompt_profile": "fact_finding_report",
+        "instructions": [
+            "사실결과조사보고 형식으로 작성하라.",
+            "확인된 사실, 검토 쟁점, 추가 확인 필요사항이 드러나도록 정리하라.",
+        ],
+    },
+    "attendance_notice": {
+        "pipeline_doc_type": "fact_summary",
+        "prompt_profile": "attendance_notice",
+        "instructions": [
+            "출석통지서 형식으로 작성하라.",
+            "수신자 인적사항, 출석 요구 사유, 출석 일시·장소, 절차적 권리 안내가 빠지지 않도록 정리하라.",
+        ],
+    },
+    "committee_reference": {
+        "pipeline_doc_type": "disciplinary_opinion",
+        "prompt_profile": "committee_reference",
+        "instructions": [
+            "위원회 참고 자료 형식으로 작성하라.",
+            "적용 규정, 징계 판단 포인트, 추가 조사 필요성이 드러나도록 정리하라.",
+        ],
+    },
+    "disciplinary_resolution": {
+        "pipeline_doc_type": "disciplinary_opinion",
+        "prompt_profile": "disciplinary_resolution",
+        "instructions": [
+            "징계의결서 형식으로 작성하라.",
+            "의결주문과 이유 부분이 논리 구조를 유지하도록 정리하라.",
+        ],
+    },
 }
 
 
@@ -208,15 +304,16 @@ class CaseWorkflowService:
         now = _utcnow_iso()
         case_id = f"case-{uuid4().hex[:8]}"
         generation_artifacts = await self._generate_initial_document_artifacts(payload, case_id)
-        documents = self._build_document_templates(payload, case_id, now, generation_artifacts)
+        documents, questions = self._build_document_templates(payload, case_id, now, generation_artifacts)
         progress_percent = self._get_document_status_progress(documents)
         generated_count = len(generation_artifacts.responses)
+        active_question_count = sum(item.status == "open" for item in questions)
 
         summary = CaseSummary(
             id=case_id,
             title=payload.title,
             caseType=payload.caseType,
-            status=self._derive_case_status(progress_percent, documents, []),
+            status=self._derive_case_status(progress_percent, documents, questions),
             occurredAt=payload.occurredAt,
             location=payload.location,
             author=payload.author,
@@ -227,7 +324,7 @@ class CaseWorkflowService:
             createdAt=now,
             updatedAt=now,
             progressPercent=progress_percent,
-            activeQuestionCount=0,
+            activeQuestionCount=active_question_count,
             openReviewCount=0,
             documentCount=len(documents),
         )
@@ -244,13 +341,13 @@ class CaseWorkflowService:
                     type="document_generated",
                     title="기본 문서 패키지 생성",
                     description=(
-                        f"관련 조항 검색과 grounded generation을 거쳐 {generated_count}개의 핵심 초안과 "
-                        f"{len(documents)}개의 기본 문서 패키지가 생성되었습니다."
+                        f"관련 조항 검색과 grounded generation을 거쳐 {generated_count}개의 초기 초안이 "
+                        f"문서 본문에 바로 반영되었습니다."
                         if generated_count > 0
                         else f"{len(documents)}개의 기본 문서가 사건 유형에 맞춰 생성되었습니다."
                     ),
                     occurredAt=now,
-                    actor="LawFlow 시스템",
+                    actor="MILO 시스템",
                 ),
                 SeedTimelineEvent(
                     id=f"{case_id}-timeline-002",
@@ -281,12 +378,16 @@ class CaseWorkflowService:
             self._database["cases"].insert(0, summary)
             self._database["caseDetails"].insert(0, detail)
             self._database["documents"].extend(documents)
+            self._database["questions"].extend(questions)
             return self._hydrate_case_detail(case_id)
 
     def get_documents_by_case_id(self, case_id: str) -> list[DocumentRecord]:
         with self._lock:
             self._ensure_case(case_id)
-            documents = [deepcopy(item) for item in self._get_documents_for_case(case_id)]
+            source_documents = self._get_documents_for_case(case_id)
+            for document in source_documents:
+                self._ensure_approved_body_locked(document)
+            documents = [deepcopy(item) for item in source_documents]
             for document in documents:
                 document.legalBasisIds = self.legal_basis_catalog.resolve_ids_for_document(document)
             return documents
@@ -297,6 +398,7 @@ class CaseWorkflowService:
             document = next((item for item in documents if item.id == document_id), None)
             if document is None:
                 raise KeyError("문서 정보를 찾을 수 없습니다.")
+            self._ensure_approved_body_locked(document)
             index = next(index for index, item in enumerate(documents) if item.id == document_id)
             legal_basis_ids = self.legal_basis_catalog.resolve_ids_for_document(document)
             document_payload = document.model_dump()
@@ -309,11 +411,24 @@ class CaseWorkflowService:
                     for item in self._get_questions_for_case(case_id)
                     if item.documentId == document_id
                 ],
+                changeSetHistorySummary=deepcopy(document.changeSetHistory),
                 previousDocumentId=documents[index - 1].id if index > 0 else None,
                 nextDocumentId=documents[index + 1].id if index < len(documents) - 1 else None,
             )
 
-    def submit_document_review(self, case_id: str, document_id: str, title: str, description: str) -> DocumentDetail:
+    async def submit_document_review(
+        self,
+        case_id: str,
+        document_id: str,
+        title: str,
+        description: str,
+    ) -> DocumentDetail:
+        normalized_title = title.strip()
+        normalized_description = description.strip()
+        if not normalized_title or not normalized_description:
+            raise ValueError("피드백 제목과 내용을 입력해 주세요.")
+
+        now = _utcnow_iso()
         with self._lock:
             self._ensure_case(case_id)
             document = next(
@@ -326,27 +441,16 @@ class CaseWorkflowService:
             )
             if document is None:
                 raise KeyError("문서 정보를 찾을 수 없습니다.")
-
-            normalized_title = title.strip()
-            normalized_description = description.strip()
-            if not normalized_title or not normalized_description:
-                raise ValueError("피드백 제목과 내용을 입력해 주세요.")
-
-            now = _utcnow_iso()
-            document.reviewHistory.insert(
-                0,
-                DocumentReviewHistory(
-                    id=f"{document.id}-review-{int(datetime.now(tz=UTC).timestamp() * 1000)}",
-                    title=normalized_title,
-                    description=normalized_description,
-                    createdAt=now,
-                    status="open",
-                ),
+            review = DocumentReviewHistory(
+                id=f"{document.id}-review-{int(datetime.now(tz=UTC).timestamp() * 1000)}",
+                title=normalized_title,
+                description=normalized_description,
+                createdAt=now,
+                status="open",
             )
-            if document.status != "needs_input":
-                document.status = "generating"
+            document.reviewHistory.insert(0, review)
+            document.status = self._derive_document_status_locked(case_id, document)
             document.updatedAt = now
-
             self._append_timeline_event(
                 case_id,
                 SeedTimelineEvent(
@@ -360,6 +464,61 @@ class CaseWorkflowService:
                     relatedDocumentId=document_id,
                 ),
             )
+            case_payload = self._build_case_payload_locked(case_id)
+            question_context = self._build_question_context_instructions_locked(case_id, document_id)
+
+        try:
+            response = await self._generate_document_for_case(
+                case_payload,
+                case_id,
+                document.type,
+                extra_instructions=[
+                    *question_context,
+                    f"다음 사용자 피드백을 반영한 수정안을 작성하라: {normalized_title}",
+                    normalized_description,
+                ],
+            )
+        except Exception as error:
+            with self._lock:
+                self._ensure_case(case_id)
+                document = next(
+                    (
+                        item
+                        for item in self._database["documents"]
+                        if item.caseId == case_id and item.id == document_id
+                    ),
+                    None,
+                )
+                if document is not None:
+                    document.status = self._derive_document_status_locked(case_id, document)
+                    document.updatedAt = now
+                self._sync_case_summary(case_id)
+            raise RuntimeError(f"Gemini 문서 수정안 생성에 실패했습니다: {error}") from error
+
+        with self._lock:
+            self._ensure_case(case_id)
+            document = next(
+                (
+                    item
+                    for item in self._database["documents"]
+                    if item.caseId == case_id and item.id == document_id
+                ),
+                None,
+            )
+            if document is None:
+                raise KeyError("문서 정보를 찾을 수 없습니다.")
+
+            self._store_generated_change_set_locked(
+                case_id=case_id,
+                document=document,
+                response=response,
+                source="review_feedback",
+                created_at=now,
+                title=f"{normalized_title} 수정안",
+                description=normalized_description,
+                related_review_id=review.id,
+            )
+
             self._sync_case_summary(case_id)
             return self.get_document_by_id(case_id, document_id)
 
@@ -382,30 +541,13 @@ class CaseWorkflowService:
                 raise KeyError("피드백 정보를 찾을 수 없습니다.")
             if review.status == "resolved":
                 raise ValueError("이미 반영 완료된 피드백입니다.")
+            if document.activeChangeSet is not None:
+                raise RuntimeError("승인 대기 중인 수정안이 있어 피드백을 바로 종료할 수 없습니다.")
 
             now = _utcnow_iso()
             review.status = "resolved"
-            has_remaining_open_reviews = any(item.status == "open" for item in document.reviewHistory)
-            has_open_questions = any(
-                item.status == "open"
-                for item in self._get_questions_for_case(case_id)
-                if item.documentId == document_id
-            )
-
-            document.status = (
-                "needs_input"
-                if has_open_questions
-                else "generating" if has_remaining_open_reviews else "completed"
-            )
+            document.status = self._derive_document_status_locked(case_id, document)
             document.updatedAt = now
-            document.versionHistory.insert(
-                0,
-                DocumentVersion(
-                    version=f"v{len(document.versionHistory) + 1}.0",
-                    updatedAt=now,
-                    note=f"{review.title} 피드백을 반영해 문서를 수정했습니다.",
-                ),
-            )
 
             self._append_timeline_event(
                 case_id,
@@ -413,10 +555,10 @@ class CaseWorkflowService:
                     id=f"{case_id}-timeline-{int(datetime.now(tz=UTC).timestamp() * 1000)}",
                     stageId="review_feedback",
                     type="review_completed",
-                    title="문서 피드백 반영 완료",
-                    description=f"{document.title} 문서에 대한 사용자 피드백이 반영되었습니다.",
+                    title="문서 피드백 종료",
+                    description=f"{document.title} 문서 피드백 요청이 종료되었습니다.",
                     occurredAt=now,
-                    actor="문서 생성 엔진",
+                    actor="사용자",
                     relatedDocumentId=document_id,
                 ),
             )
@@ -433,7 +575,12 @@ class CaseWorkflowService:
             self._ensure_case(case_id)
             return [deepcopy(item) for item in self._get_questions_for_case(case_id) if item.status == "open"]
 
-    def submit_question_answer(self, question_id: str, answer: str) -> CaseDetail:
+    async def submit_question_answer(self, question_id: str, answer: str) -> CaseDetail:
+        normalized_answer = answer.strip()
+        if not normalized_answer:
+            raise ValueError("답변 내용을 입력해 주세요.")
+
+        now = _utcnow_iso()
         with self._lock:
             question = next((item for item in self._database["questions"] if item.id == question_id), None)
             if question is None:
@@ -441,34 +588,19 @@ class CaseWorkflowService:
             if question.status == "answered":
                 raise ValueError("이미 답변이 제출된 질문입니다.")
 
-            now = _utcnow_iso()
             question.status = "answered"
-            question.answer = answer
+            question.answer = normalized_answer
             question.answeredAt = now
 
-            document = next((item for item in self._database["documents"] if item.id == question.documentId), None)
-            if document is not None:
-                document.status = "generating" if document.status == "needs_input" else document.status
-                document.updatedAt = now
-                document.versionHistory.insert(
-                    0,
-                    DocumentVersion(
-                        version=f"v{len(document.versionHistory) + 1}.0",
-                        updatedAt=now,
-                        note="추가 질문 답변이 반영되어 초안이 갱신되었습니다.",
-                    ),
+            generation_targets = [
+                (
+                    item.id,
+                    item.type,
+                    self._build_question_context_instructions_locked(question.caseId, item.id),
                 )
-                document.reviewHistory.insert(
-                    0,
-                    DocumentReviewHistory(
-                        id=f"{document.id}-review-{int(datetime.now(tz=UTC).timestamp() * 1000)}",
-                        title="질문 답변 반영",
-                        description="사용자 입력을 반영해 문서 상태를 갱신했습니다.",
-                        createdAt=now,
-                        status="resolved",
-                    ),
-                )
-
+                for item in self._get_dependent_documents_locked(question.caseId, question.documentId)
+            ]
+            case_payload = self._build_case_payload_locked(question.caseId)
             self._append_timeline_event(
                 question.caseId,
                 SeedTimelineEvent(
@@ -476,13 +608,61 @@ class CaseWorkflowService:
                     stageId="information_request",
                     type="information_received",
                     title="추가 질문 답변 반영",
-                    description=f"{question.title}에 대한 답변이 제출되어 문서 초안이 갱신되었습니다.",
+                    description=f"{question.title}에 대한 답변이 제출되어 문서 수정안이 갱신되었습니다.",
                     occurredAt=now,
                     actor="사용자",
                     relatedQuestionId=question.id,
                     relatedDocumentId=question.documentId,
                 ),
             )
+
+        generation_results: list[DocumentGenerationResponse | Exception] = []
+        if generation_targets:
+            generation_results = await asyncio.gather(
+                *[
+                    self._generate_document_for_case(
+                        case_payload,
+                        question.caseId,
+                        document_type,
+                        extra_instructions=[
+                            *question_context,
+                            "위 추가 답변을 반영한 수정안만 제안하고, 기존 승인본은 직접 덮어쓰지 마라.",
+                        ],
+                    )
+                    for _, document_type, question_context in generation_targets
+                ],
+                return_exceptions=True,
+            )
+
+        generation_error = next((result for result in generation_results if isinstance(result, Exception)), None)
+        if generation_error is not None:
+            with self._lock:
+                question = next((item for item in self._database["questions"] if item.id == question_id), None)
+                if question is None:
+                    raise KeyError("질문 정보를 찾을 수 없습니다.")
+                self._sync_case_summary(question.caseId)
+            raise RuntimeError(f"Gemini 문서 수정안 생성에 실패했습니다: {generation_error}") from generation_error
+
+        with self._lock:
+            question = next((item for item in self._database["questions"] if item.id == question_id), None)
+            if question is None:
+                raise KeyError("질문 정보를 찾을 수 없습니다.")
+
+            for (target_document_id, _, _), result in zip(generation_targets, generation_results):
+                document = next((item for item in self._database["documents"] if item.id == target_document_id), None)
+                if document is None:
+                    continue
+                self._store_generated_change_set_locked(
+                    case_id=question.caseId,
+                    document=document,
+                    response=result,
+                    source="question_answer",
+                    created_at=now,
+                    title=f"{question.title} 반영 수정안",
+                    description="사용자 답변을 반영한 문서 수정안입니다.",
+                    related_question_id=question.id,
+                )
+
             self._sync_case_summary(question.caseId)
             return self._hydrate_case_detail(question.caseId)
 
@@ -586,7 +766,7 @@ class CaseWorkflowService:
                     title="문서 검토 완료",
                     description="최종 문서 검토가 끝나 사건 패키지가 완료 상태로 정리되었습니다.",
                     occurredAt=detail.updatedAt,
-                    actor="LawFlow 시스템",
+                    actor="MILO 시스템",
                 )
             )
 
@@ -604,6 +784,9 @@ class CaseWorkflowService:
         documents_needing_input = sum(document.status == "needs_input" for document in case_detail.documents)
         generating_documents = sum(document.status == "generating" for document in case_detail.documents)
         pending_documents = sum(document.status == "pending" for document in case_detail.documents)
+        pending_approval_documents = sum(
+            document.status == "pending_approval" for document in case_detail.documents
+        )
         review_items = [review for document in case_detail.documents for review in document.reviewHistory]
         open_reviews = sum(item.status == "open" for item in review_items)
         resolved_reviews = sum(item.status == "resolved" for item in review_items)
@@ -654,25 +837,24 @@ class CaseWorkflowService:
             WorkflowStage(
                 id="document_generation",
                 detail=(
-                    f"{len(case_detail.documents)}개 문서 초안이 준비되었고, 현재 {open_reviews}건의 피드백 반영이 진행 중입니다. "
+                    f"{len(case_detail.documents)}개 문서 초안이 준비되었고, 현재 {pending_approval_documents}개의 승인 대기 수정안과 {open_reviews}건의 피드백이 있습니다. "
                     "내부적으로는 사실관계 구조화 → 법체계 라우팅 → Graph RAG + 보조 검색 → Retrieval Evaluator 이후 "
-                    "근거 수집 → 문단 계획 → 섹션별 생성이 순차 실행됩니다."
-                    if open_reviews > 0 and drafts_prepared
+                    "근거 수집 → 섹션 계획 → 문서 생성이 순차 실행됩니다."
+                    if (open_reviews > 0 or pending_approval_documents > 0) and drafts_prepared
                     else (
                         f"{len(case_detail.documents)}개의 문서가 모두 생성 완료되었습니다. "
                         "관련 조항 파이프라인과 문서 생성 파이프라인이 모두 완료된 상태입니다."
                         if documents_completed
                         else (
                             f"{len(case_detail.documents)}개 문서 중 {generating_documents}개 작성 중, "
-                            f"{pending_documents}개 대기, {documents_needing_input}개 추가 정보 필요 상태입니다. "
+                            f"{pending_approval_documents}개 승인 대기, {pending_documents}개 대기, "
+                            f"{documents_needing_input}개 추가 정보 필요 상태입니다. "
                             "관련 조항 검색 결과를 바탕으로 문서 계획과 섹션 생성이 진행 중입니다."
                         )
                     )
                 ),
                 status=(
                     "completed"
-                    if open_reviews > 0 and drafts_prepared
-                    else "completed"
                     if documents_completed
                     else "pending"
                     if not case_detail.documents or open_questions or documents_needing_input > 0
@@ -683,9 +865,9 @@ class CaseWorkflowService:
             WorkflowStage(
                 id="review_feedback",
                 detail=(
-                    f"{open_reviews}건의 검토 요청이 열려 있으며, 사용자 피드백 반영이 필요합니다. "
-                    "이 단계에서는 draft evaluator 경고와 사용자 수정 요청을 함께 처리합니다."
-                    if open_reviews > 0
+                    f"{pending_approval_documents}개의 승인 대기 수정안과 {open_reviews}건의 검토 요청이 열려 있습니다. "
+                    "이 단계에서는 원본과 수정안을 비교하고 섹션별 승인 여부를 결정합니다."
+                    if pending_approval_documents > 0 or open_reviews > 0
                     else "문서 생성이 완료되면 검토와 피드백 반영 단계로 넘어갑니다."
                     if not documents_completed and not has_review_history
                     else (
@@ -697,7 +879,7 @@ class CaseWorkflowService:
                 ),
                 status=(
                     "active"
-                    if open_reviews > 0
+                    if pending_approval_documents > 0 or open_reviews > 0
                     else "pending" if not documents_completed and not has_review_history else "completed"
                 ),
                 **WORKFLOW_STAGE_META["review_feedback"],
@@ -757,7 +939,10 @@ class CaseWorkflowService:
 
     def _hydrate_case_detail(self, case_id: str) -> CaseDetail:
         summary, detail = self._ensure_case(case_id)
-        documents = [deepcopy(item) for item in self._get_documents_for_case(case_id)]
+        source_documents = self._get_documents_for_case(case_id)
+        for document in source_documents:
+            self._ensure_approved_body_locked(document)
+        documents = [deepcopy(item) for item in source_documents]
         for document in documents:
             document.legalBasisIds = self.legal_basis_catalog.resolve_ids_for_document(document)
         questions = [deepcopy(item) for item in self._get_questions_for_case(case_id)]
@@ -785,72 +970,58 @@ class CaseWorkflowService:
         payload: CaseCreatePayload,
         case_id: str,
     ) -> CaseDocumentGenerationArtifacts:
-        if self.document_generation_service is None:
-            return CaseDocumentGenerationArtifacts(responses={}, failures={})
-
-        specs = [
-            (
-                "fact_finding_report",
-                "fact_summary",
-                "fact_finding_report",
-                [
-                    "사실결과조사보고 형식으로 작성하라.",
-                    "확인된 사실, 검토 쟁점, 추가 확인 필요사항이 드러나도록 정리하라.",
-                ],
-            ),
-            (
-                "attendance_notice",
-                "fact_summary",
-                "attendance_notice",
-                [
-                    "출석통지서 형식으로 작성하라.",
-                    "수신자 인적사항, 출석 요구 사유, 출석 일시·장소, 절차적 권리 안내가 빠지지 않도록 정리하라.",
-                ],
-            ),
-            (
-                "committee_reference",
-                "disciplinary_opinion",
-                "committee_reference",
-                [
-                    "위원회 참고 자료 형식으로 작성하라.",
-                    "적용 규정, 징계 판단 포인트, 추가 조사 필요성이 드러나도록 정리하라.",
-                ],
-            ),
-            (
-                "disciplinary_resolution",
-                "disciplinary_opinion",
-                "disciplinary_resolution",
-                [
-                    "징계의결서 형식으로 작성하라.",
-                    "의결주문과 이유 부분이 논리 구조를 유지하도록 정리하라.",
-                ],
-            ),
-        ]
-        base_request = self._build_base_pipeline_request(payload)
         results = await asyncio.gather(
             *[
-                self._generate_pipeline_document(
-                    base_request,
-                    payload,
-                    case_id,
-                    document_type,
-                    pipeline_doc_type,
-                    prompt_profile,
-                    instructions,
-                )
-                for document_type, pipeline_doc_type, prompt_profile, instructions in specs
+                self._generate_document_for_case(payload, case_id, document_type)
+                for document_type in DOCUMENT_PIPELINE_SPECS
             ],
             return_exceptions=True,
         )
 
         responses: dict[str, DocumentGenerationResponse] = {}
         failures: dict[str, str] = {}
-        for (document_type, _, _, _), result in zip(specs, results):
+        for document_type, result in zip(DOCUMENT_PIPELINE_SPECS, results):
             if isinstance(result, Exception):
                 failures[document_type] = str(result).strip() or type(result).__name__
                 continue
             responses[document_type] = result
+        if failures:
+            failed_titles = [
+                DOCUMENT_TITLE_BY_TYPE.get(document_type, document_type)
+                for document_type in DOCUMENT_PIPELINE_SPECS
+                if document_type in failures
+            ]
+            primary_failure = next(iter(failures.values()))
+            raise RuntimeError(
+                f"초기 문서 생성에 실패했습니다: {', '.join(failed_titles)}. {primary_failure}"
+            )
         return CaseDocumentGenerationArtifacts(responses=responses, failures=failures)
+
+    async def _generate_document_for_case(
+        self,
+        payload: CaseCreatePayload,
+        case_id: str,
+        document_type: str,
+        *,
+        extra_instructions: list[str] | None = None,
+    ) -> DocumentGenerationResponse:
+        if self.document_generation_service is None:
+            raise RuntimeError("Gemini 문서 생성 서비스가 설정되지 않았습니다.")
+
+        spec = DOCUMENT_PIPELINE_SPECS.get(document_type)
+        if spec is None:
+            raise KeyError(f"지원하지 않는 문서 유형입니다: {document_type}")
+
+        base_request = self._build_base_pipeline_request(payload)
+        return await self._generate_pipeline_document(
+            base_request,
+            payload,
+            case_id,
+            document_type,
+            str(spec["pipeline_doc_type"]),
+            str(spec["prompt_profile"]),
+            [*list(spec["instructions"]), *(extra_instructions or [])],
+        )
 
     async def _generate_pipeline_document(
         self,
@@ -992,9 +1163,673 @@ class CaseWorkflowService:
 
         return " ".join(parts)
 
+    def _build_case_payload_locked(self, case_id: str) -> CaseCreatePayload:
+        summary, detail = self._ensure_case(case_id)
+        return CaseCreatePayload(
+            title=summary.title,
+            caseType=summary.caseType,
+            occurredAt=summary.occurredAt,
+            location=summary.location,
+            author=summary.author,
+            relatedPersons=summary.relatedPersons,
+            summary=summary.summary,
+            details=summary.details,
+            attachmentProvided=detail.attachmentProvided,
+            attachmentSummary=detail.attachmentSummary,
+            priority=summary.priority,
+        )
+
+    def _build_question_context_instructions_locked(
+        self,
+        case_id: str,
+        document_id: str,
+        pending_answer: tuple[QuestionRecord, str] | None = None,
+    ) -> list[str]:
+        context_lines: list[str] = []
+        documents_by_id = {item.id: item for item in self._get_documents_for_case(case_id)}
+        target_document = documents_by_id.get(document_id)
+        target_order = target_document.order if target_document is not None else None
+        answered_questions = [
+            item
+            for item in self._get_questions_for_case(case_id)
+            if item.status == "answered"
+            and item.answer
+            and (
+                target_order is None
+                or documents_by_id.get(item.documentId) is None
+                or documents_by_id[item.documentId].order <= target_order
+            )
+        ]
+        for item in answered_questions:
+            context_lines.append(f"- {item.title}: {item.answer}")
+
+        if pending_answer is not None:
+            question, answer = pending_answer
+            context_lines.append(f"- {question.title}: {answer}")
+
+        if not context_lines:
+            return []
+
+        return ["다음 추가 사용자 입력을 반드시 반영하라.\n" + "\n".join(context_lines)]
+
+    def _get_dependent_documents_locked(self, case_id: str, document_id: str) -> list[DocumentRecord]:
+        documents = self._get_documents_for_case(case_id)
+        source_document = next((item for item in documents if item.id == document_id), None)
+        if source_document is None:
+            return []
+        return [item for item in documents if item.order >= source_document.order]
+
+    def _slugify_text(self, value: str, *, fallback: str) -> str:
+        normalized = re.sub(r"[^0-9A-Za-z가-힣]+", "-", value).strip("-").lower()
+        return normalized or fallback
+
+    def _normalize_section_title(self, value: str) -> str:
+        return re.sub(r"[^0-9A-Za-z가-힣]+", "", value).lower()
+
+    def _build_document_section(self, section_id: str, title: str, text: str) -> DocumentSection:
+        paragraphs = [
+            DocumentParagraph(id=f"{section_id}-p{index}", text=paragraph)
+            for index, paragraph in enumerate(self._split_paragraphs(text), start=1)
+        ]
+        return DocumentSection(id=section_id, title=title, paragraphs=paragraphs)
+
+    def _serialize_section_text(self, section: DocumentSection) -> str:
+        return "\n\n".join(
+            paragraph.text.strip()
+            for paragraph in section.paragraphs
+            if paragraph.text.strip()
+        ).strip()
+
+    def _split_paragraphs(self, text: str) -> list[str]:
+        normalized = text.strip()
+        if not normalized:
+            return []
+
+        blocks = [block.strip() for block in re.split(r"\n\s*\n", normalized) if block.strip()]
+        if len(blocks) > 1:
+            return blocks
+
+        lines = [line.strip() for line in normalized.splitlines() if line.strip()]
+        if len(lines) <= 1:
+            return [normalized]
+
+        paragraphs: list[str] = []
+        current: list[str] = []
+        for line in lines:
+            if current and PARAGRAPH_START_RE.match(line):
+                paragraphs.append("\n".join(current).strip())
+                current = [line]
+                continue
+            current.append(line)
+        if current:
+            paragraphs.append("\n".join(current).strip())
+        return [paragraph for paragraph in paragraphs if paragraph]
+
+    def _build_document_body_from_content(self, content: str, *, default_title: str) -> DocumentBody:
+        stripped_content = content.strip()
+        if not stripped_content:
+            return DocumentBody(sections=[], compiledText="")
+
+        lines = stripped_content.splitlines()
+        sections: list[DocumentSection] = []
+        prelude_lines: list[str] = []
+        current_title: str | None = None
+        current_id: str | None = None
+        current_lines: list[str] = []
+
+        def flush_current_section() -> None:
+            nonlocal current_title, current_id, current_lines
+            if current_title is None or current_id is None:
+                return
+            section_text = "\n".join(line.rstrip() for line in current_lines).strip()
+            sections.append(self._build_document_section(current_id, current_title, section_text))
+            current_title = None
+            current_id = None
+            current_lines = []
+
+        for raw_line in lines:
+            line = raw_line.strip()
+            numbered_heading = SECTION_HEADING_RE.match(line)
+            bracket_heading = BRACKET_SECTION_RE.match(line)
+            if numbered_heading or bracket_heading:
+                if current_title is None and prelude_lines:
+                    header_text = "\n".join(item.rstrip() for item in prelude_lines).strip()
+                    if header_text:
+                        sections.append(self._build_document_section("header", "문서 헤더", header_text))
+                    prelude_lines = []
+                flush_current_section()
+                section_title = (
+                    numbered_heading.group("title").strip()
+                    if numbered_heading is not None
+                    else bracket_heading.group("title").strip()
+                )
+                current_title = section_title
+                current_id = self._slugify_text(section_title, fallback=f"section-{len(sections) + 1}")
+                current_lines = []
+                continue
+
+            if current_title is None:
+                prelude_lines.append(raw_line.rstrip())
+            else:
+                current_lines.append(raw_line.rstrip())
+
+        flush_current_section()
+
+        if not sections:
+            return DocumentBody(
+                sections=[
+                    self._build_document_section(
+                        self._slugify_text(default_title, fallback="body"),
+                        default_title,
+                        stripped_content,
+                    )
+                ],
+                compiledText=stripped_content,
+            )
+
+        return DocumentBody(sections=sections, compiledText=stripped_content)
+
+    def _build_document_body_from_generated_response(
+        self,
+        response: DocumentGenerationResponse,
+        *,
+        prompt_profile: str | None = None,
+    ) -> DocumentBody:
+        sections: list[DocumentSection] = []
+        if prompt_profile == "attendance_notice":
+            sections.append(self._build_document_section("header", "문서 헤더", "제목: 출석통지서"))
+        elif prompt_profile == "committee_reference":
+            sections.append(
+                self._build_document_section("header", "문서 헤더", f"제목: {response.draft.title}")
+            )
+        elif prompt_profile == "disciplinary_resolution":
+            sections.append(self._build_document_section("header", "문서 헤더", "제목: 징계의결서"))
+
+        for index, section in enumerate(response.draft.sections, start=1):
+            section_id = self._slugify_text(section.section_id, fallback=f"section-{index}")
+            section_title = "별첨" if prompt_profile == "attendance_notice" and section.section_id == "appendix" else section.title
+            sections.append(self._build_document_section(section_id, section_title, section.text))
+
+        return DocumentBody(
+            sections=sections,
+            compiledText=self._render_generated_document_content(response, prompt_profile=prompt_profile),
+        )
+
+    def _compile_document_body(self, body: DocumentBody) -> str:
+        blocks: list[str] = []
+        visible_index = 1
+        for section in body.sections:
+            paragraph_text = "\n\n".join(
+                paragraph.text.strip()
+                for paragraph in section.paragraphs
+                if paragraph.text.strip()
+            ).strip()
+            if not paragraph_text:
+                continue
+
+            if section.id == "header" or section.title == "문서 헤더":
+                blocks.append(paragraph_text)
+                continue
+            if section.title == "별첨":
+                blocks.append(f"[별첨]\n{paragraph_text}")
+                continue
+
+            blocks.append(f"{visible_index}. {section.title}\n{paragraph_text}")
+            visible_index += 1
+        return "\n\n".join(blocks).strip()
+
+    def _ensure_approved_body_locked(self, document: DocumentRecord) -> None:
+        if document.approvedBody is None:
+            document.approvedBody = self._build_document_body_from_content(
+                document.content,
+                default_title=document.title,
+            )
+        if not document.content.strip() and document.approvedBody is not None:
+            document.content = document.approvedBody.compiledText or self._compile_document_body(document.approvedBody)
+
+    def _collect_missing_items(self, response: DocumentGenerationResponse) -> list[str]:
+        missing_items: list[str] = []
+        for item in response.checklist_missing_info:
+            if item not in missing_items:
+                missing_items.append(item)
+        for section in response.draft.sections:
+            for item in section.open_issues:
+                if item not in missing_items:
+                    missing_items.append(item)
+        return missing_items
+
+    def _replace_document_questions_locked(
+        self,
+        case_id: str,
+        document: DocumentRecord,
+        missing_items: list[str],
+        created_at: str,
+    ) -> QuestionRecord | None:
+        self._database["questions"] = [
+            item
+            for item in self._database["questions"]
+            if not (
+                item.caseId == case_id
+                and item.documentId == document.id
+                and item.status == "open"
+            )
+        ]
+
+        if not missing_items:
+            return None
+
+        question = self._build_document_question_record(case_id, document, missing_items, created_at)
+        self._database["questions"].insert(0, question)
+        return question
+
+    def _build_document_question_record(
+        self,
+        case_id: str,
+        document: DocumentRecord,
+        missing_items: list[str],
+        created_at: str,
+    ) -> QuestionRecord:
+        return QuestionRecord(
+            id=f"{document.id}-question-{uuid4().hex[:8]}",
+            caseId=case_id,
+            documentId=document.id,
+            title=f"{document.title} 보완 정보 확인",
+            prompt=(
+                f"{document.title} 수정안을 확정하려면 다음 정보를 입력해 주세요: {', '.join(missing_items)}."
+            ),
+            reason=(
+                f"{document.title} 수정안에는 {', '.join(missing_items[:3])} 정보가 비어 있어 승인 전에 보완이 필요합니다."
+            ),
+            status="open",
+            answer=None,
+            createdAt=created_at,
+            answeredAt=None,
+            guidance="가능하면 일정, 장소, 담당자, 의결 내용처럼 바로 문서에 반영할 수 있는 형태로 입력해 주세요.",
+        )
+
+    def _derive_document_status_locked(self, case_id: str, document: DocumentRecord) -> DocumentStatus:
+        has_open_questions = any(
+            item.status == "open"
+            for item in self._get_questions_for_case(case_id)
+            if item.documentId == document.id
+        )
+        if has_open_questions:
+            return "needs_input"
+        if document.activeChangeSet is not None:
+            return "pending_approval"
+        if any(item.status == "open" for item in document.reviewHistory):
+            return "generating"
+        return "completed" if document.approvedBody is not None or document.content.strip() else "pending"
+
+    def _pair_sections(
+        self,
+        base_sections: list[DocumentSection],
+        proposed_sections: list[DocumentSection],
+    ) -> tuple[list[tuple[DocumentSection, DocumentSection]], list[DocumentSection], list[DocumentSection]]:
+        pairs: list[tuple[DocumentSection, DocumentSection]] = []
+        used_base: set[str] = set()
+        used_proposed: set[str] = set()
+        base_by_id = {section.id: section for section in base_sections}
+
+        for proposed in proposed_sections:
+            base = base_by_id.get(proposed.id)
+            if base is None or base.id in used_base:
+                continue
+            pairs.append((base, proposed))
+            used_base.add(base.id)
+            used_proposed.add(proposed.id)
+
+        for proposed in proposed_sections:
+            if proposed.id in used_proposed:
+                continue
+            proposed_key = self._normalize_section_title(proposed.title)
+            for base in base_sections:
+                if base.id in used_base:
+                    continue
+                if self._normalize_section_title(base.title) != proposed_key:
+                    continue
+                pairs.append((base, proposed))
+                used_base.add(base.id)
+                used_proposed.add(proposed.id)
+                break
+
+        remaining_base = [section for section in base_sections if section.id not in used_base]
+        remaining_proposed = [section for section in proposed_sections if section.id not in used_proposed]
+
+        return pairs, remaining_base, remaining_proposed
+
+    def _build_change_set_patches(
+        self,
+        base_body: DocumentBody,
+        proposed_body: DocumentBody,
+    ) -> list[DocumentPatch]:
+        patches: list[DocumentPatch] = []
+        paired_sections, removed_sections, added_sections = self._pair_sections(
+            base_body.sections,
+            proposed_body.sections,
+        )
+        base_order = {section.id: index for index, section in enumerate(base_body.sections)}
+        proposed_order = {section.id: index for index, section in enumerate(proposed_body.sections)}
+
+        def build_patch(
+            section_id: str,
+            section_title: str,
+            original_section_title: str | None,
+            section_order: int,
+            paragraph_id: str,
+            change_type: str,
+            original_text: str,
+            proposed_text: str,
+        ) -> None:
+            patches.append(
+                DocumentPatch(
+                    id=f"patch-{uuid4().hex[:8]}",
+                    sectionId=section_id,
+                    sectionTitle=section_title,
+                    originalSectionTitle=original_section_title,
+                    sectionOrder=section_order,
+                    paragraphId=paragraph_id,
+                    changeType=change_type,
+                    originalText=original_text,
+                    proposedText=proposed_text,
+                )
+            )
+
+        for base_section, proposed_section in paired_sections:
+            original_section_text = self._serialize_section_text(base_section)
+            proposed_section_text = self._serialize_section_text(proposed_section)
+            if (
+                base_section.title != proposed_section.title
+                or original_section_text != proposed_section_text
+            ):
+                build_patch(
+                    base_section.id,
+                    proposed_section.title,
+                    base_section.title,
+                    proposed_order.get(proposed_section.id, base_order.get(base_section.id, 0)),
+                    f"{base_section.id}-section",
+                    "modify",
+                    original_section_text,
+                    proposed_section_text,
+                )
+
+        for section in removed_sections:
+            build_patch(
+                section.id,
+                section.title,
+                section.title,
+                base_order.get(section.id, 0),
+                f"{section.id}-section",
+                "remove",
+                self._serialize_section_text(section),
+                "",
+            )
+
+        for section in added_sections:
+            build_patch(
+                section.id,
+                section.title,
+                None,
+                proposed_order.get(section.id, len(proposed_body.sections)),
+                f"{section.id}-section",
+                "add",
+                "",
+                self._serialize_section_text(section),
+            )
+
+        return patches
+
+    def _create_change_set_locked(
+        self,
+        document: DocumentRecord,
+        proposed_body: DocumentBody,
+        *,
+        source: ChangeSetSource,
+        created_at: str,
+        title: str,
+        description: str,
+        related_review_id: str | None = None,
+        related_question_id: str | None = None,
+    ) -> DocumentChangeSet | None:
+        self._ensure_approved_body_locked(document)
+        if document.activeChangeSet is not None:
+            document.changeSetHistory.insert(
+                0,
+                document.activeChangeSet.model_copy(
+                    update={"status": "superseded", "appliedAt": created_at},
+                    deep=True,
+                ),
+            )
+            document.activeChangeSet = None
+
+        base_body = document.approvedBody or DocumentBody(sections=[], compiledText="")
+        patches = self._build_change_set_patches(base_body, proposed_body)
+        if not patches:
+            return None
+
+        change_set = DocumentChangeSet(
+            id=f"{document.id}-changeset-{uuid4().hex[:8]}",
+            source=source,
+            title=title,
+            description=description,
+            createdAt=created_at,
+            baseVersion=document.versionHistory[0].version if document.versionHistory else "v0.0",
+            patches=patches,
+            relatedReviewId=related_review_id,
+            relatedQuestionId=related_question_id,
+        )
+        document.activeChangeSet = change_set
+        return change_set
+
+    def _store_generated_change_set_locked(
+        self,
+        *,
+        case_id: str,
+        document: DocumentRecord,
+        response: DocumentGenerationResponse,
+        source: ChangeSetSource,
+        created_at: str,
+        title: str,
+        description: str,
+        related_review_id: str | None = None,
+        related_question_id: str | None = None,
+    ) -> None:
+        prompt_profile = str(DOCUMENT_PIPELINE_SPECS.get(document.type, {}).get("prompt_profile") or document.type)
+        proposed_body = self._build_document_body_from_generated_response(
+            response,
+            prompt_profile=prompt_profile,
+        )
+        missing_items = self._collect_missing_items(response)
+        description_parts = [description.strip()]
+        if missing_items:
+            description_parts.append(f"추가 확인 필요: {', '.join(missing_items[:3])}.")
+        if response.warnings:
+            description_parts.append(f"검토 경고 {len(response.warnings)}건이 함께 기록되었습니다.")
+
+        self._create_change_set_locked(
+            document,
+            proposed_body,
+            source=source,
+            created_at=created_at,
+            title=title,
+            description=" ".join(part for part in description_parts if part),
+            related_review_id=related_review_id,
+            related_question_id=related_question_id,
+        )
+        follow_up_question = self._replace_document_questions_locked(case_id, document, missing_items, created_at)
+        if follow_up_question is not None:
+            self._append_timeline_event(
+                case_id,
+                SeedTimelineEvent(
+                    id=f"{case_id}-timeline-{int(datetime.now(tz=UTC).timestamp() * 1000)}",
+                    stageId="information_request",
+                    type="information_requested",
+                    title="추가 정보 요청 생성",
+                    description=f"{document.title} 승인안 확정을 위해 추가 정보 요청이 생성되었습니다.",
+                    occurredAt=created_at,
+                    actor="MILO 시스템",
+                    relatedQuestionId=follow_up_question.id,
+                    relatedDocumentId=document.id,
+                ),
+            )
+
+        document.status = self._derive_document_status_locked(case_id, document)
+        document.updatedAt = created_at
+
+    def _next_document_version(self, document: DocumentRecord) -> str:
+        if not document.versionHistory:
+            return "v1.0"
+
+        current = document.versionHistory[0].version
+        match = re.match(r"^v(?P<major>\d+)\.(?P<minor>\d+)$", current)
+        if match is None:
+            return f"v{len(document.versionHistory) + 1}.0"
+
+        major = int(match.group("major"))
+        minor = int(match.group("minor"))
+        if major == 0:
+            return "v1.0"
+        return f"v{major}.{minor + 1}"
+
+    def _apply_change_set_to_body(
+        self,
+        base_body: DocumentBody,
+        patches: list[DocumentPatch],
+    ) -> DocumentBody:
+        sections = [section.model_copy(deep=True) for section in base_body.sections]
+        approved_patches = sorted(
+            (patch for patch in patches if patch.decision == "approved"),
+            key=lambda patch: (patch.sectionOrder, patch.sectionId),
+        )
+
+        for patch in approved_patches:
+            if patch.changeType == "remove":
+                sections = [section for section in sections if section.id != patch.sectionId]
+                continue
+
+            next_section = self._build_document_section(
+                patch.sectionId,
+                patch.sectionTitle,
+                patch.proposedText,
+            )
+            existing_index = next(
+                (index for index, item in enumerate(sections) if item.id == patch.sectionId),
+                None,
+            )
+            if existing_index is not None:
+                sections.pop(existing_index)
+
+            insert_index = min(max(patch.sectionOrder, 0), len(sections))
+            sections.insert(insert_index, next_section)
+
+        sections = [section for section in sections if section.paragraphs]
+        next_body = DocumentBody(sections=sections, compiledText="")
+        next_body.compiledText = self._compile_document_body(next_body)
+        return next_body
+
+    def apply_document_change_set(
+        self,
+        case_id: str,
+        document_id: str,
+        change_set_id: str,
+        approved_patch_ids: list[str],
+        rejected_patch_ids: list[str],
+    ) -> DocumentDetail:
+        with self._lock:
+            self._ensure_case(case_id)
+            document = next(
+                (
+                    item
+                    for item in self._database["documents"]
+                    if item.caseId == case_id and item.id == document_id
+                ),
+                None,
+            )
+            if document is None:
+                raise KeyError("문서 정보를 찾을 수 없습니다.")
+            if document.activeChangeSet is None or document.activeChangeSet.id != change_set_id:
+                raise KeyError("승인 대기 중인 수정안을 찾을 수 없습니다.")
+
+            approved_ids = set(approved_patch_ids)
+            rejected_ids = set(rejected_patch_ids)
+            if approved_ids & rejected_ids:
+                raise ValueError("같은 섹션을 동시에 승인과 거절로 선택할 수 없습니다.")
+
+            change_set_patch_ids = {patch.id for patch in document.activeChangeSet.patches}
+            if change_set_patch_ids != approved_ids | rejected_ids:
+                raise ValueError("모든 변경 섹션에 대해 승인 또는 거절 결정을 내려야 합니다.")
+
+            now = _utcnow_iso()
+            resolved_patches: list[DocumentPatch] = []
+            for patch in document.activeChangeSet.patches:
+                if patch.id in approved_ids:
+                    resolved_patches.append(patch.model_copy(update={"decision": "approved"}, deep=True))
+                elif patch.id in rejected_ids:
+                    resolved_patches.append(patch.model_copy(update={"decision": "rejected"}, deep=True))
+                else:
+                    resolved_patches.append(patch.model_copy(deep=True))
+
+            resolved_change_set = document.activeChangeSet.model_copy(
+                update={
+                    "patches": resolved_patches,
+                    "status": "applied" if approved_ids else "rejected",
+                    "appliedAt": now,
+                },
+                deep=True,
+            )
+
+            self._ensure_approved_body_locked(document)
+            if approved_ids:
+                document.approvedBody = self._apply_change_set_to_body(
+                    document.approvedBody or DocumentBody(sections=[], compiledText=""),
+                    resolved_patches,
+                )
+                document.content = document.approvedBody.compiledText
+                document.versionHistory.insert(
+                    0,
+                    DocumentVersion(
+                        version=self._next_document_version(document),
+                        updatedAt=now,
+                        note=(
+                            f"{resolved_change_set.title}에서 승인된 섹션 {len(approved_ids)}건을 공식 본문에 반영했습니다."
+                        ),
+                    ),
+                )
+
+            document.activeChangeSet = None
+            document.changeSetHistory.insert(0, resolved_change_set)
+            if resolved_change_set.relatedReviewId is not None:
+                review = next(
+                    (item for item in document.reviewHistory if item.id == resolved_change_set.relatedReviewId),
+                    None,
+                )
+                if review is not None and review.status == "open":
+                    review.status = "resolved"
+            document.status = self._derive_document_status_locked(case_id, document)
+            document.updatedAt = now
+
+            self._append_timeline_event(
+                case_id,
+                SeedTimelineEvent(
+                    id=f"{case_id}-timeline-{int(datetime.now(tz=UTC).timestamp() * 1000)}",
+                    stageId="review_feedback",
+                    type="review_completed",
+                    title="문서 수정안 검토 완료",
+                    description=(
+                        f"{document.title} 문서의 승인 대기 수정안이 공식 본문에 반영되었습니다."
+                        if approved_ids
+                        else f"{document.title} 문서의 승인 대기 수정안이 모두 거절되었습니다."
+                    ),
+                    occurredAt=now,
+                    actor="사용자",
+                    relatedDocumentId=document.id,
+                ),
+            )
+            self._sync_case_summary(case_id)
+            return self.get_document_by_id(case_id, document_id)
+
     def _render_generated_document_content(
         self,
-        payload: CaseCreatePayload,
         response: DocumentGenerationResponse,
         *,
         prompt_profile: str | None = None,
@@ -1043,7 +1878,7 @@ class CaseWorkflowService:
         case_id: str,
         created_at: str,
         generation_artifacts: CaseDocumentGenerationArtifacts | None = None,
-    ) -> list[DocumentRecord]:
+    ) -> tuple[list[DocumentRecord], list[QuestionRecord]]:
         generation_artifacts = generation_artifacts or CaseDocumentGenerationArtifacts(responses={}, failures={})
         related_people = ", ".join(payload.relatedPersons)
         attachment_text = payload.attachmentSummary if payload.attachmentProvided else "없음"
@@ -1057,20 +1892,14 @@ class CaseWorkflowService:
                 templates.append(
                     {
                         **item,
-                        "status": "completed",
+                        "baseStatus": "completed",
                         "legalBasisIds": ["lb-003", "lb-005"],
                         "description": (
                             "관련 조항 검색 결과를 반영해 확인된 사실관계와 1차 조사 의견을 정리한 문서입니다."
                             if generated is not None
                             else "확인된 사실관계와 1차 조사 의견을 정리한 문서입니다."
                         ),
-                        "content": self._render_generated_document_content(
-                            payload,
-                            generated,
-                            prompt_profile="fact_finding_report",
-                        )
-                        if generated is not None
-                        else (
+                        "content": (
                             f"1. 사용자 입력 사건 개요\n{payload.summary}\n\n"
                             f"2. 사용자 입력 상세 사실관계\n{payload.details}\n\n"
                             "3. 사용자 입력 메타데이터\n"
@@ -1081,14 +1910,6 @@ class CaseWorkflowService:
                             f"관련자: {related_people}\n"
                             f"첨부자료 요약: {attachment_text}"
                         ),
-                        "versionNote": (
-                            self._build_generated_version_note(
-                                "관련 조항 검색과 grounded generation을 거쳐 조사보고 초안을 생성했습니다.",
-                                generated,
-                            )
-                            if generated is not None
-                            else "사건 등록 직후 필수 문서 초안이 완성되었습니다."
-                        ),
                     }
                 )
             elif item["type"] == "attendance_notice":
@@ -1096,20 +1917,14 @@ class CaseWorkflowService:
                 templates.append(
                     {
                         **item,
-                        "status": "completed",
+                        "baseStatus": "completed",
                         "legalBasisIds": ["lb-004"],
                         "description": (
                             "징계위원회 출석 요구 사유와 절차적 권리 안내를 반영한 통지서입니다."
                             if generated is not None
                             else "위원회 출석 일정과 소명 기회를 안내하는 통지서입니다."
                         ),
-                        "content": self._render_generated_document_content(
-                            payload,
-                            generated,
-                            prompt_profile="attendance_notice",
-                        )
-                        if generated is not None
-                        else (
+                        "content": (
                             "제목: 출석통지서\n\n"
                             "누락정보\n"
                             "- 출석 일시\n"
@@ -1144,14 +1959,6 @@ class CaseWorkflowService:
                             "[별첨]\n"
                             "- 필요 시 진술권 포기서 양식"
                         ),
-                        "versionNote": (
-                            self._build_generated_version_note(
-                                "관련 조항 검색과 grounded generation을 거쳐 출석통지서 초안을 생성했습니다.",
-                                generated,
-                            )
-                            if generated is not None
-                            else "사건 등록 직후 필수 문서 초안이 완성되었습니다."
-                        ),
                     }
                 )
             elif item["type"] == "committee_reference":
@@ -1159,20 +1966,14 @@ class CaseWorkflowService:
                 templates.append(
                     {
                         **item,
-                        "status": "generating",
+                        "baseStatus": "generating",
                         "legalBasisIds": ["lb-003", "lb-005"],
                         "description": (
                             "위원회가 사실관계와 적용 규정을 빠르게 파악할 수 있도록 관련 근거를 반영한 참고 자료입니다."
                             if generated is not None
                             else "위원회가 사실관계와 쟁점을 빠르게 파악할 수 있도록 정리한 참고 자료입니다."
                         ),
-                        "content": self._render_generated_document_content(
-                            payload,
-                            generated,
-                            prompt_profile="committee_reference",
-                        )
-                        if generated is not None
-                        else (
+                        "content": (
                             "제목: 징계위원회 참고자료\n\n"
                             "1. 사건 개요\n"
                             f"- 사건명: {payload.title}\n"
@@ -1212,14 +2013,6 @@ class CaseWorkflowService:
                             "10. 첨부자료 목록\n"
                             f"- {attachment_text}"
                         ),
-                        "versionNote": (
-                            self._build_generated_version_note(
-                                "관련 조항 검색과 grounded generation을 거쳐 위원회 참고 자료 초안을 생성했습니다.",
-                                generated,
-                            )
-                            if generated is not None
-                            else "사건 등록 직후 기본 초안이 생성되었습니다."
-                        ),
                     }
                 )
             elif item["type"] == "disciplinary_resolution":
@@ -1227,20 +2020,14 @@ class CaseWorkflowService:
                 templates.append(
                     {
                         **item,
-                        "status": "pending",
+                        "baseStatus": "pending",
                         "legalBasisIds": ["lb-003", "lb-004", "lb-005"],
                         "description": (
                             "최종 의결 입력 전 단계에서 의결서 형식과 판단 구조를 정리한 초안입니다."
                             if generated is not None
                             else "위원회 의결 결과와 처분 방향을 반영하는 최종 문서입니다."
                         ),
-                        "content": self._render_generated_document_content(
-                            payload,
-                            generated,
-                            prompt_profile="disciplinary_resolution",
-                        )
-                        if generated is not None
-                        else (
+                        "content": (
                             "제목: 징계의결서\n\n"
                             "누락정보\n"
                             "- 최종 의결결론\n"
@@ -1274,21 +2061,13 @@ class CaseWorkflowService:
                             "6. 위원장 및 위원 표시\n"
                             "- 위원장 및 위원 표시: 자료상 명확하지 않음"
                         ),
-                        "versionNote": (
-                            self._build_generated_version_note(
-                                "관련 조항 검색과 grounded generation을 거쳐 징계의결서 초안 구조를 생성했습니다.",
-                                generated,
-                            )
-                            if generated is not None
-                            else "사건 등록 직후 기본 초안이 생성되었습니다."
-                        ),
                     }
                 )
             else:
                 templates.append(
                     {
                         **item,
-                        "status": "pending",
+                        "baseStatus": "pending",
                         "legalBasisIds": ["lb-003", "lb-004", "lb-005"],
                         "description": "위원회 의결 결과와 처분 방향을 반영하는 최종 문서입니다.",
                         "content": (
@@ -1297,38 +2076,68 @@ class CaseWorkflowService:
                             f"3. 사용자 입력 상세 사실관계\n{payload.details}\n\n"
                             "4. 현재 상태\n최종 의결 결과는 아직 비어 있으며, 위 내용은 사용자 입력 원문 보존용 초안입니다."
                         ),
-                        "versionNote": "사건 등록 직후 기본 초안이 생성되었습니다.",
                     }
                 )
 
         results: list[DocumentRecord] = []
+        questions: list[QuestionRecord] = []
         for index, template in enumerate(templates, start=1):
-            status = str(template["status"])
             draft_document = DocumentRecord(
                 id=f"{case_id}-doc-{index}",
                 caseId=case_id,
                 title=str(template["title"]),
                 type=str(template["type"]),
                 order=int(template["order"]),
-                status=status,
+                status=str(template["baseStatus"]),
                 description=str(template["description"]),
                 content=str(template["content"]),
+                approvedBody=self._build_document_body_from_content(
+                    str(template["content"]),
+                    default_title=str(template["title"]),
+                ),
                 legalBasisIds=list(template["legalBasisIds"]),
                 versionHistory=[
                     DocumentVersion(
-                        version="v1.0" if status == "completed" else "v0.1",
+                        version="v0.1",
                         updatedAt=created_at,
-                        note=str(template.get("versionNote"))
-                        or (
-                            "사건 등록 직후 필수 문서 초안이 완성되었습니다."
-                            if status == "completed"
-                            else "사건 등록 직후 기본 초안이 생성되었습니다."
-                        ),
+                        note="사건 등록 직후 기준 템플릿 초안이 생성되었습니다.",
                     )
                 ],
                 reviewHistory=[],
                 updatedAt=created_at,
             )
+
+            generated = generation_artifacts.responses.get(draft_document.type)
+            if generated is not None:
+                prompt_profile = str(DOCUMENT_PIPELINE_SPECS.get(draft_document.type, {}).get("prompt_profile") or draft_document.type)
+                proposed_body = self._build_document_body_from_generated_response(
+                    generated,
+                    prompt_profile=prompt_profile,
+                )
+                draft_document.approvedBody = proposed_body
+                draft_document.content = proposed_body.compiledText
+                draft_document.versionHistory[0] = DocumentVersion(
+                    version="v1.0",
+                    updatedAt=created_at,
+                    note=self._build_generated_version_note(
+                        "관련 조항 검색과 grounded generation 결과를 반영한 초기 초안이 공식 본문에 적용되었습니다.",
+                        generated,
+                    ),
+                )
+                missing_items = self._collect_missing_items(generated)
+                if missing_items:
+                    questions.append(
+                        self._build_document_question_record(
+                            case_id,
+                            draft_document,
+                            missing_items,
+                            created_at,
+                        )
+                    )
+                    draft_document.status = "needs_input"
+                else:
+                    draft_document.status = "completed"
+
             draft_document.legalBasisIds = self.legal_basis_catalog.resolve_ids_for_document(draft_document)
             results.append(draft_document)
-        return results
+        return results, questions
