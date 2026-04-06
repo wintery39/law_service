@@ -12,9 +12,9 @@ export function Header() {
         <div className="flex items-center justify-between gap-4">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-500">
-              Military Disciplinary Workflow
+              Military Legal OS
             </p>
-            <h1 className="font-serif text-2xl font-semibold text-slate-950">LawFlow</h1>
+            <h1 className="font-serif text-2xl font-semibold text-slate-950">MILO</h1>
           </div>
         </div>
         <nav className="flex flex-wrap items-center gap-2">

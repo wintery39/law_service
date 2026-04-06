@@ -1,6 +1,6 @@
-# LawFlow Frontend
+# MILO Frontend
 
-군 내 사건 처리와 법률 문서 생성을 단계별로 보여주는 React 데모 프론트엔드입니다. 실제 백엔드 없이 `src/mocks/*.json`을 기반으로 동작하며, 사건 등록부터 문서 생성, 추가 질문 응답, 워크플로우 시각화까지 한 흐름으로 시연할 수 있게 구성했습니다.
+MILO(Military Legal OS)는 군 내 사건 처리와 법률 문서 생성을 단계별로 보여주는 React 데모 프론트엔드입니다. 실제 백엔드 없이 `src/mocks/*.json`을 기반으로 동작하며, 사건 등록부터 문서 생성, 추가 질문 응답, 워크플로우 시각화까지 한 흐름으로 시연할 수 있게 구성했습니다.
 
 ## 실행 방법
 
@@ -8,6 +8,14 @@
 
 - Node.js `12.22.9`
 - npm `8.5.1`
+
+환경 변수:
+
+```bash
+cp .env.example .env
+```
+
+`VITE_API_BASE_URL` 에 프론트가 호출할 API 주소를 넣어야 합니다. 현재 저장소에서는 `frontend/.env` 가 Git에 포함되지 않도록 설정되어 있습니다.
 
 ```bash
 npm install

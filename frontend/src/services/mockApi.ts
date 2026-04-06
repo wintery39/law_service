@@ -213,7 +213,7 @@ function normalizeTimeline(
       title: '문서 검토 완료',
       description: '최종 문서 검토가 끝나 사건 패키지가 완료 상태로 정리되었습니다.',
       occurredAt: detail.updatedAt,
-      actor: 'LawFlow 시스템',
+      actor: 'MILO 시스템',
     });
   }
 
@@ -439,7 +439,7 @@ export const mockApi = {
             title: '기본 문서 패키지 생성',
             description: `${documents.length}개의 기본 문서가 사건 유형에 맞춰 생성되었습니다.`,
             occurredAt: now,
-            actor: 'LawFlow 시스템',
+            actor: 'MILO 시스템',
           },
           {
             id: `${caseId}-timeline-002`,

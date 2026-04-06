@@ -99,7 +99,7 @@
         "title": "위원회 참고 자료 보완 질문 생성",
         "description": "재발 방지 계획의 일정과 책임 부서를 확정하기 위한 추가 질문이 생성되었습니다.",
         "occurredAt": "2026-03-18T15:20:00.000Z",
-        "actor": "LawFlow LLM",
+        "actor": "MILO LLM",
         "relatedQuestionId": "question-005",
         "relatedDocumentId": "doc-019"
       },

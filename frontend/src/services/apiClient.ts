@@ -1,13 +1,19 @@
-const DEFAULT_API_BASE_URL = 'http://127.0.0.1:8000/api';
-
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? DEFAULT_API_BASE_URL).replace(/\/$/, '');
-
 interface ApiErrorBody {
   detail?: string;
 }
 
+function getApiBaseUrl() {
+  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
+
+  if (!apiBaseUrl) {
+    throw new Error('API 주소가 설정되지 않았습니다. frontend/.env의 VITE_API_BASE_URL을 확인해주세요.');
+  }
+
+  return apiBaseUrl.replace(/\/$/, '');
+}
+
 function buildUrl(path: string) {
-  return `${API_BASE_URL}${path.startsWith('/') ? path : `/${path}`}`;
+  return `${getApiBaseUrl()}${path.startsWith('/') ? path : `/${path}`}`;
 }
 
 async function parseResponse(response: Response) {

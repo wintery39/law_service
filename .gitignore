@@ -16,8 +16,11 @@ pnpm-debug.log*
 # Environment files
 .env
 .env.*
+frontend/.env
+frontend/.env.*
 !.env.example
 !backend/.env.example
+!frontend/.env.example
 
 # Frontend build artifacts
 frontend/node_modules/

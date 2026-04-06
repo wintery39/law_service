@@ -51,6 +51,7 @@ cd /home/desktopuser/Desktop/code/lawer_service
 
 ```bash
 cd /home/desktopuser/Desktop/code/lawer_service/frontend
+cp .env.example .env
 npm install
 npm run dev
 ```
